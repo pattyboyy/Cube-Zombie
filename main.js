@@ -608,6 +608,7 @@ const zombieMoveScratch = new THREE.Vector3();
 const biomeBlendScratch = createBiomeBlendState();
 const terrainBiomeBlendScratch = createBiomeBlendState();
 const weatherBiomeBlendScratch = createBiomeBlendState();
+const lakeBasinStateScratch = { influence: 0, deepCore: 0 };
 const terrainMaterial = new THREE.MeshStandardMaterial({
   vertexColors: true,
   flatShading: true,
@@ -2457,6 +2458,45 @@ function fbm3D(x, y, z, octaves = 4) {
   return sum / normalizer;
 }
 
+function getLakeBasinAt(worldX, worldZ, out = lakeBasinStateScratch) {
+  const cellSize = 128;
+  const baseCx = Math.floor(worldX / cellSize);
+  const baseCz = Math.floor(worldZ / cellSize);
+  let influence = 0;
+  let deepCore = 0;
+
+  for (let dz = -1; dz <= 1; dz += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const cx = baseCx + dx;
+      const cz = baseCz + dz;
+      const spawnChance = hash2(cx * 11.7 + 73.9, cz * 9.3 - 41.2);
+      if (spawnChance < 0.54) continue;
+
+      const centerX = (cx + hash2(cx * 3.23 + 12.4, cz * 5.11 - 4.7)) * cellSize;
+      const centerZ = (cz + hash2(cx * 4.91 - 9.6, cz * 2.77 + 18.3)) * cellSize;
+      const radius = lerp(18, 44, hash2(cx * 7.6 - 28.5, cz * 6.2 + 24.1));
+
+      const dxWorld = worldX - centerX;
+      const dzWorld = worldZ - centerZ;
+      const distSq = dxWorld * dxWorld + dzWorld * dzWorld;
+      if (distSq >= radius * radius) continue;
+
+      const dist = Math.sqrt(distSq);
+      const t = 1 - dist / radius;
+      const basin = t * t * (3 - 2 * t);
+      const basinStrength = basin * (0.64 + spawnChance * 0.36);
+      const deepStrength = Math.pow(basin, 1.75) * (0.58 + spawnChance * 0.42);
+
+      if (basinStrength > influence) influence = basinStrength;
+      if (deepStrength > deepCore) deepCore = deepStrength;
+    }
+  }
+
+  out.influence = influence;
+  out.deepCore = deepCore;
+  return out;
+}
+
 function fitCentered(value, center, radius) {
   return THREE.MathUtils.clamp(1 - Math.abs(value - center) / Math.max(0.0001, radius), 0, 1);
 }
@@ -3109,7 +3149,10 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     0,
     0.9
   );
-  const lakeMask = lakeRegion * lakePocket * lakeFlatness * lakeInland * lakeBiomeAllowance * lakeSuppression;
+  const basinCell = getLakeBasinAt(sampleX, sampleZ, lakeBasinStateScratch);
+  const noiseLakeMask = lakeRegion * lakePocket * lakeFlatness * lakeInland * lakeBiomeAllowance * lakeSuppression;
+  const basinLakeMask = basinCell.influence * lakeBiomeAllowance * (0.58 + lakeFlatness * 0.42) * lakeSuppression;
+  const lakeMask = THREE.MathUtils.clamp(noiseLakeMask * 0.56 + basinLakeMask, 0, 1);
   const lakeDepthScale =
     2.8 +
     plainsW * 4.8 +
@@ -3125,7 +3168,11 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     tundraW * 0.8 +
     oasisW * 1.1;
   const lakeDepth = Math.pow(lakeMask, 0.96) * lakeDepthScale;
-  const lakeDeepCoreMask = lakeMask * THREE.MathUtils.smoothstep(lakeDetail, 0.74, 0.95);
+  const lakeDeepCoreMask = THREE.MathUtils.clamp(
+    lakeMask * THREE.MathUtils.smoothstep(lakeDetail, 0.74, 0.95) * 0.58 + basinCell.deepCore * lakeBiomeAllowance,
+    0,
+    1
+  );
   const lakeDeepCoreAllowance = THREE.MathUtils.clamp(
     plainsW * 1.02 +
       forestW * 0.94 +
