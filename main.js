@@ -183,6 +183,7 @@ const FACE_DEFS = [
 ];
 
 const TRIANGLE_ORDER = [0, 1, 2, 0, 2, 3];
+const FLORA_UV_INSET = 1 / 128;
 
 const DAY_SKY = new THREE.Color(0x98ceff);
 const SUNSET_SKY = new THREE.Color(0xf0a166);
@@ -1007,7 +1008,10 @@ function createCloudTexture(variant = 0) {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestMipMapNearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -5635,7 +5639,10 @@ function createFloraTexture(kind) {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestMipMapNearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.generateMipmaps = false;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -5778,11 +5785,13 @@ function pushFloraQuad(buffer, centerX, baseY, centerZ, angle, width, height, r,
   ];
   const normalX = Math.sin(angle);
   const normalZ = -Math.cos(angle);
+  const uvMin = FLORA_UV_INSET;
+  const uvMax = 1 - FLORA_UV_INSET;
   const uvs = [
-    [0, 0],
-    [1, 0],
-    [1, 1],
-    [0, 1],
+    [uvMin, uvMin],
+    [uvMax, uvMin],
+    [uvMax, uvMax],
+    [uvMin, uvMax],
   ];
 
   for (const cornerIndex of TRIANGLE_ORDER) {
