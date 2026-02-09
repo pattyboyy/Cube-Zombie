@@ -605,7 +605,59 @@ const chunkWaterMaterial = new THREE.MeshStandardMaterial({
   metalness: 0.02,
   depthWrite: false,
 });
+configureTerrainDetail(terrainMaterial);
 const floraMaterials = createFloraMaterials();
+
+function configureTerrainDetail(material) {
+  material.customProgramCacheKey = () => "terrain-detail-v2-stylized";
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "void main() {",
+        `
+      varying vec3 vDetailWorldPos;
+      void main() {
+      `
+      )
+      .replace(
+        "#include <worldpos_vertex>",
+        `
+      #include <worldpos_vertex>
+      vDetailWorldPos = worldPosition.xyz;
+      `
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "void main() {",
+        `
+      varying vec3 vDetailWorldPos;
+
+      float terrainDetailHash(vec2 p) {
+        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+      }
+
+      void main() {
+      `
+      )
+      .replace(
+        "#include <color_fragment>",
+        `
+      #include <color_fragment>
+      vec2 pixelCell = floor(vDetailWorldPos.xz * 2.0);
+      float grainA = terrainDetailHash(pixelCell);
+      float grainB = terrainDetailHash(pixelCell + floor(vDetailWorldPos.yy * 1.7));
+      float grain = floor((grainA * 0.65 + grainB * 0.35) * 4.0) * 0.25;
+      float strata = floor(fract(vDetailWorldPos.y * 0.48 + grainA * 0.37) * 3.0) / 3.0;
+      float checker = mod(pixelCell.x + pixelCell.y + floor(vDetailWorldPos.y * 0.5), 2.0);
+      float detail = 0.78 + grain * 0.18 + strata * 0.07 + checker * 0.04;
+      detail = floor(detail * 6.0) / 6.0;
+      diffuseColor.rgb *= clamp(detail, 0.68, 1.08);
+      `
+      );
+  };
+  material.needsUpdate = true;
+}
 
 function readSeedFromQuery() {
   const rawSeed = new URLSearchParams(window.location.search).get("seed");
@@ -851,11 +903,13 @@ function createCloudTexture(variant = 0) {
 
   const blobs = blobSets[variant % blobSets.length];
   const opacityScale = variant === 1 ? 0.82 : variant === 2 ? 0.88 : 0.95;
+  const shadeScale = variant === 1 ? 0.91 : variant === 2 ? 0.95 : 1.0;
 
   for (const blob of blobs) {
     const gradient = ctx.createRadialGradient(blob[0], blob[1], 2, blob[0], blob[1], blob[2]);
-    gradient.addColorStop(0, `rgba(255,255,255,${0.92 * opacityScale})`);
-    gradient.addColorStop(0.64, `rgba(255,255,255,${0.58 * opacityScale})`);
+    gradient.addColorStop(0, `rgba(255,255,255,${0.94 * opacityScale})`);
+    gradient.addColorStop(0.56, `rgba(255,255,255,${0.64 * opacityScale})`);
+    gradient.addColorStop(0.82, `rgba(255,255,255,${0.34 * opacityScale})`);
     gradient.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = gradient;
     ctx.beginPath();
@@ -863,9 +917,88 @@ function createCloudTexture(variant = 0) {
     ctx.fill();
   }
 
+  ctx.globalCompositeOperation = "source-atop";
+  for (let i = 0; i < 8; i += 1) {
+    const sweep = (i / 7) * size;
+    const band = ctx.createLinearGradient(0, sweep, size, sweep + size * 0.2);
+    band.addColorStop(0, "rgba(255,255,255,0.05)");
+    band.addColorStop(0.5, "rgba(255,255,255,0.16)");
+    band.addColorStop(1, "rgba(255,255,255,0.04)");
+    ctx.fillStyle = band;
+    ctx.fillRect(0, 0, size, size);
+  }
+  ctx.globalCompositeOperation = "source-over";
+
+  const data = ctx.getImageData(0, 0, size, size);
+  const pixels = data.data;
+  const cloudSeed = (variant + 1) * 17041;
+  for (let y = 0; y < size; y += 1) {
+    const yNorm = y / (size - 1);
+    for (let x = 0; x < size; x += 1) {
+      const index = (y * size + x) * 4;
+      const alpha = pixels[index + 3];
+      if (alpha === 0) continue;
+
+      let h = (x * 374761393 + y * 668265263 + cloudSeed) >>> 0;
+      h = (h ^ (h >>> 13)) >>> 0;
+      h = Math.imul(h, 1274126177) >>> 0;
+      const noiseA = ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+      const noiseB = Math.sin((x + cloudSeed * 0.0013) * 0.11 + y * 0.07) * 0.5 + 0.5;
+      const fluff = noiseA * 0.62 + noiseB * 0.38;
+
+      const verticalLight = 1.08 - yNorm * 0.2;
+      const brightness = THREE.MathUtils.clamp(
+        (0.78 + (fluff - 0.5) * 0.32) * verticalLight * shadeScale,
+        0.58,
+        1.0
+      );
+      const alphaScale = THREE.MathUtils.clamp(0.82 + fluff * 0.3, 0.64, 1.0);
+
+      const value = Math.round(255 * brightness);
+      pixels[index] = value;
+      pixels[index + 1] = value;
+      pixels[index + 2] = value;
+      pixels[index + 3] = Math.round(alpha * alphaScale);
+    }
+  }
+
+  const pixelStep = 3;
+  for (let by = 0; by < size; by += pixelStep) {
+    for (let bx = 0; bx < size; bx += pixelStep) {
+      const sampleX = Math.min(size - 1, bx + (pixelStep >> 1));
+      const sampleY = Math.min(size - 1, by + (pixelStep >> 1));
+      const sampleIndex = (sampleY * size + sampleX) * 4;
+      const sampleAlpha = pixels[sampleIndex + 3];
+      if (sampleAlpha === 0) continue;
+
+      const brightness = pixels[sampleIndex] / 255;
+      const alpha = sampleAlpha / 255;
+      const quantBrightness = Math.round(brightness * 4) / 4;
+      const quantAlpha = Math.round(alpha * 5) / 5;
+      const value = Math.round(quantBrightness * 255);
+      const outAlpha = quantAlpha <= 0.08 ? 0 : Math.round(quantAlpha * 255);
+
+      for (let oy = 0; oy < pixelStep; oy += 1) {
+        const py = by + oy;
+        if (py >= size) continue;
+        for (let ox = 0; ox < pixelStep; ox += 1) {
+          const px = bx + ox;
+          if (px >= size) continue;
+          const targetIndex = (py * size + px) * 4;
+          if (pixels[targetIndex + 3] === 0) continue;
+          pixels[targetIndex] = value;
+          pixels[targetIndex + 1] = value;
+          pixels[targetIndex + 2] = value;
+          pixels[targetIndex + 3] = outAlpha;
+        }
+      }
+    }
+  }
+  ctx.putImageData(data, 0, 0);
+
   const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.LinearFilter;
-  texture.minFilter = THREE.LinearMipMapLinearFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestMipMapNearestFilter;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -1464,7 +1597,7 @@ function createCloudLayer() {
     const material = new THREE.MeshLambertMaterial({
       map: createCloudTexture(variant),
       transparent: true,
-      alphaTest: 0.12,
+      alphaTest: 0.18,
       depthWrite: false,
       side: THREE.DoubleSide,
       color: 0xffffff,
@@ -5205,6 +5338,64 @@ function isOccludingBlock(type) {
   return type !== BLOCK.AIR && !isFloraBlock(type) && !isWaterBlock(type);
 }
 
+function textureSeedFromString(value) {
+  let seed = 2166136261 >>> 0;
+  for (let i = 0; i < value.length; i += 1) {
+    seed ^= value.charCodeAt(i);
+    seed = Math.imul(seed, 16777619) >>> 0;
+  }
+  return seed >>> 0;
+}
+
+function textureNoise2d(x, y, seed) {
+  let h = (Math.imul(x + 11, 374761393) + Math.imul(y + 7, 668265263) + seed) >>> 0;
+  h = (h ^ (h >>> 13)) >>> 0;
+  h = Math.imul(h, 1274126177) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+
+function applyFloraTextureDetail(ctx, size, kind) {
+  const seed = textureSeedFromString(kind);
+  const imageData = ctx.getImageData(0, 0, size, size);
+  const pixels = imageData.data;
+  const pixelStep = 2;
+
+  for (let y = 0; y < size; y += 1) {
+    const yNorm = y / (size - 1);
+    for (let x = 0; x < size; x += 1) {
+      const index = (y * size + x) * 4;
+      const alpha = pixels[index + 3];
+      if (alpha === 0) continue;
+
+      const blockX = (x / pixelStep) | 0;
+      const blockY = (y / pixelStep) | 0;
+      const baseNoise = textureNoise2d(blockX, blockY, seed);
+      const broadNoise = textureNoise2d((blockX / 2) | 0, (blockY / 2) | 0, seed ^ 0x9e3779b9);
+      const xNorm = x / (size - 1);
+      const verticalLight = 0.8 + (1 - yNorm) * 0.23;
+      const centerLight = 0.88 + (0.5 - Math.abs(xNorm - 0.5)) * 0.2;
+      const grain = (baseNoise - 0.5) * 0.26 + (broadNoise - 0.5) * 0.14;
+      let brightness = verticalLight * centerLight + grain;
+
+      if (alpha < 180) brightness *= 0.87;
+      brightness = THREE.MathUtils.clamp(brightness, 0.42, 1.0);
+      brightness = Math.round(brightness * 5) / 5;
+
+      const value = Math.round(255 * brightness);
+      pixels[index] = value;
+      pixels[index + 1] = value;
+      pixels[index + 2] = value;
+
+      const alphaScale = THREE.MathUtils.clamp(0.88 + (baseNoise - 0.5) * 0.3, 0.68, 1.0);
+      const shapedAlpha = Math.round(alpha * alphaScale);
+      const quantizedAlpha = Math.round((shapedAlpha / 255) * 5) / 5;
+      pixels[index + 3] = quantizedAlpha <= 0.12 ? 0 : Math.round(quantizedAlpha * 255);
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
 function createFloraTexture(kind) {
   const size = 64;
   const canvas = document.createElement("canvas");
@@ -5212,8 +5403,9 @@ function createFloraTexture(kind) {
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#ffffff";
+  ctx.fillStyle = "#f2f2f2";
+  ctx.strokeStyle = "#f2f2f2";
+  ctx.lineJoin = "round";
 
   if (kind === "grass") {
     ctx.lineCap = "round";
@@ -5294,6 +5486,7 @@ function createFloraTexture(kind) {
     ctx.beginPath();
     ctx.arc(45, 40, 12, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "#ababab";
     const berries = [
       [18, 41, 2.2],
       [25, 35, 2.4],
@@ -5308,6 +5501,7 @@ function createFloraTexture(kind) {
       ctx.arc(berry[0], berry[1], berry[2], 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.fillStyle = "#f2f2f2";
   } else if (kind === "fern") {
     ctx.lineCap = "round";
     ctx.lineWidth = 3;
@@ -5329,23 +5523,33 @@ function createFloraTexture(kind) {
   } else if (kind === "flower") {
     ctx.lineCap = "round";
     ctx.lineWidth = 5;
+    ctx.strokeStyle = "#ebebeb";
     ctx.beginPath();
     ctx.moveTo(32, 62);
     ctx.lineTo(32, 28);
     ctx.stroke();
 
+    ctx.fillStyle = "#f5f5f5";
     ctx.beginPath();
     ctx.arc(32, 22, 10, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "#d6d6d6";
     ctx.beginPath();
     ctx.arc(24, 18, 6, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
     ctx.arc(40, 18, 6, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "#9f9f9f";
+    ctx.beginPath();
+    ctx.arc(32, 22, 3.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#f2f2f2";
+    ctx.strokeStyle = "#f2f2f2";
   } else if (kind === "dead") {
     ctx.lineCap = "round";
     ctx.lineWidth = 4;
+    ctx.strokeStyle = "#d8d8d8";
     const branches = [
       [32, 62, 32, 40],
       [32, 48, 20, 34],
@@ -5359,6 +5563,7 @@ function createFloraTexture(kind) {
       ctx.lineTo(branch[2], branch[3]);
       ctx.stroke();
     }
+    ctx.strokeStyle = "#f2f2f2";
   } else if (kind === "reed") {
     ctx.lineCap = "round";
     ctx.lineWidth = 4;
@@ -5378,6 +5583,7 @@ function createFloraTexture(kind) {
   } else if (kind === "cattail") {
     ctx.lineCap = "round";
     ctx.lineWidth = 3;
+    ctx.strokeStyle = "#f0f0f0";
     const stems = [
       [20, 62, 20, 14],
       [33, 62, 32, 10],
@@ -5391,6 +5597,7 @@ function createFloraTexture(kind) {
     }
 
     ctx.lineWidth = 5;
+    ctx.strokeStyle = "#b0b0b0";
     const cattails = [
       [20, 20, 20, 10],
       [32, 16, 32, 6],
@@ -5402,6 +5609,7 @@ function createFloraTexture(kind) {
       ctx.lineTo(head[2], head[3]);
       ctx.stroke();
     }
+    ctx.strokeStyle = "#f2f2f2";
   } else {
     ctx.beginPath();
     ctx.arc(32, 30, 18, 0, Math.PI * 2);
@@ -5414,21 +5622,88 @@ function createFloraTexture(kind) {
     ctx.fill();
   }
 
+  applyFloraTextureDetail(ctx, size, kind);
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.LinearMipMapLinearFilter;
+  texture.minFilter = THREE.NearestMipMapNearestFilter;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
 
 function createFloraMaterialFromTexture(texture) {
-  return new THREE.MeshLambertMaterial({
+  const material = new THREE.MeshLambertMaterial({
     map: texture,
     transparent: true,
     alphaTest: 0.45,
     side: THREE.DoubleSide,
     vertexColors: true,
   });
+  configureFloraMaterial(material);
+  return material;
+}
+
+function configureFloraMaterial(material) {
+  material.customProgramCacheKey = () => "flora-sway-v1";
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 };
+    shader.uniforms.uWindDir = { value: new THREE.Vector2(1, 0) };
+    shader.uniforms.uWindStrength = { value: 0.34 };
+    shader.uniforms.uDaylight = { value: 1 };
+    material.userData.shaderUniforms = shader.uniforms;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "void main() {",
+        `
+      uniform float uTime;
+      uniform vec2 uWindDir;
+      uniform float uWindStrength;
+      varying float vFloraTop;
+      varying float vFloraSway;
+      void main() {
+      `
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `
+      #include <begin_vertex>
+      vFloraTop = clamp(uv.y, 0.0, 1.0);
+      vec3 worldRoot = (modelMatrix * vec4(position, 1.0)).xyz;
+      float phase = dot(worldRoot.xz, vec2(0.28, 0.19));
+      float gust = sin(uTime * (1.6 + uWindStrength * 1.8) + phase * 2.2);
+      float flutter = sin(uTime * 6.2 + phase * 7.1) * 0.35;
+      float sway = (gust * 0.22 + flutter * 0.08) * (0.09 + uWindStrength * 0.24) * pow(vFloraTop, 1.35);
+      transformed.x += uWindDir.x * sway;
+      transformed.z += uWindDir.y * sway;
+      vFloraSway = sway;
+      `
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "void main() {",
+        `
+      uniform float uDaylight;
+      varying float vFloraTop;
+      varying float vFloraSway;
+      void main() {
+      `
+      )
+      .replace(
+        "#include <color_fragment>",
+        `
+      #include <color_fragment>
+      float topBand = floor(vFloraTop * 4.0) / 4.0;
+      float swayBand = floor(clamp(abs(vFloraSway) * 40.0, 0.0, 3.0)) / 3.0;
+      float dayTint = mix(0.88, 1.03, uDaylight);
+      float shade = dayTint + topBand * 0.08 + swayBand * 0.04;
+      shade = floor(shade * 6.0) / 6.0;
+      diffuseColor.rgb *= clamp(shade, 0.72, 1.12);
+      `
+      );
+  };
+  material.needsUpdate = true;
 }
 
 function createFloraMaterials() {
@@ -6074,6 +6349,7 @@ function buildWater() {
     uDeepColor: { value: new THREE.Color(0x13345f) },
     uShallowColor: { value: new THREE.Color(0x62a8df) },
     uRainStrength: { value: 0 },
+    uWindDir: { value: new THREE.Vector2(1, 0) },
   };
 
   const material = new THREE.ShaderMaterial({
@@ -6081,14 +6357,18 @@ function buildWater() {
     vertexShader: `
       uniform float uTime;
       uniform float uRainStrength;
+      uniform vec2 uWindDir;
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
       varying float vWave;
       #include <fog_pars_vertex>
 
       float waveHeight(vec2 p, float t) {
+        vec2 windDir = normalize(uWindDir + vec2(0.0001, 0.0));
+        float alongWind = dot(p, windDir);
         float wave = sin((p.x + t * 5.8) * 0.035) * 0.11;
         wave += cos((p.y - t * 4.2) * 0.041) * 0.08;
+        wave += sin((alongWind + t * 6.4) * 0.052) * (0.025 + uRainStrength * 0.03);
         wave += sin((p.x + p.y + t * 2.4) * 0.028) * 0.06;
         wave += sin((p.x * 0.22 + p.y * 0.18 + t * 11.6)) * (0.015 + uRainStrength * 0.08);
         wave += cos((p.x * 0.17 - p.y * 0.26 - t * 9.8)) * uRainStrength * 0.055;
@@ -6120,6 +6400,7 @@ function buildWater() {
     fragmentShader: `
       uniform float uDaylight;
       uniform float uRainStrength;
+      uniform vec2 uWindDir;
       uniform vec3 uDeepColor;
       uniform vec3 uShallowColor;
       varying vec3 vWorldPos;
@@ -6131,14 +6412,23 @@ function buildWater() {
         vec3 normalDir = normalize(vWorldNormal);
         vec3 viewDir = normalize(cameraPosition - vWorldPos);
         float fresnel = pow(1.0 - clamp(dot(viewDir, normalDir), 0.0, 1.0), 2.6);
+        float fresnelStep = floor(fresnel * 4.0) / 4.0;
         float ripple = 0.5 + vWave * 1.7;
+        float crest = smoothstep(0.08, 0.2, vWave + uRainStrength * 0.14);
+        vec3 highlightDir = normalize(vec3(uWindDir.x * 0.36 + 0.22, 1.0, uWindDir.y * 0.36 + 0.18));
+        float spec = pow(max(dot(reflect(-viewDir, normalDir), highlightDir), 0.0), 36.0);
+        spec = floor(spec * 4.0) / 4.0;
 
         vec3 deep = mix(uDeepColor * 0.45, uDeepColor, uDaylight);
         vec3 shallow = mix(uShallowColor * 0.42, uShallowColor, uDaylight);
-        vec3 color = mix(deep, shallow, clamp(0.22 + fresnel * 0.92 + ripple * 0.06, 0.0, 1.0));
+        vec3 color = mix(deep, shallow, clamp(0.22 + fresnelStep * 0.92 + ripple * 0.06, 0.0, 1.0));
+        color = mix(color, vec3(0.86, 0.95, 1.0), crest * (0.22 + uRainStrength * 0.22));
+        color += spec * (0.06 + uDaylight * 0.16);
         color = mix(color, color * vec3(0.76, 0.84, 0.95), clamp(uRainStrength * 0.4, 0.0, 1.0));
+        color = floor(color * 7.0) / 7.0;
         float alpha = clamp(mix(0.2, 0.34, uDaylight) + fresnel * 0.18, 0.16, 0.62);
         alpha = clamp(alpha + uRainStrength * 0.08, 0.16, 0.74);
+        alpha = floor(alpha * 6.0) / 6.0;
 
         gl_FragColor = vec4(color, alpha);
         #include <fog_fragment>
@@ -7632,6 +7922,13 @@ function updateLighting(delta) {
     if (material && material.emissive instanceof THREE.Color) {
       material.emissive.setRGB(0, 0, 0);
     }
+    const shaderUniforms = material?.userData?.shaderUniforms;
+    if (shaderUniforms) {
+      shaderUniforms.uTime.value += delta;
+      shaderUniforms.uWindDir.value.set(weather.windX, weather.windZ);
+      shaderUniforms.uWindStrength.value = weather.windStrength;
+      shaderUniforms.uDaylight.value = daylight;
+    }
   }
   const rainWetness = THREE.MathUtils.clamp(weather.rain + weather.cloudiness * 0.18, 0, 1);
   const snowCover = THREE.MathUtils.clamp(weather.snow, 0, 1);
@@ -7724,6 +8021,7 @@ function updateLighting(delta) {
     waterUniforms.uTime.value += delta;
     waterUniforms.uDaylight.value = daylight;
     waterUniforms.uRainStrength.value = weather.rain;
+    waterUniforms.uWindDir.value.set(weather.windX, weather.windZ);
   }
 
   updatePlayerTorch(delta, daylight);
