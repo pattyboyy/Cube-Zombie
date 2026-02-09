@@ -3100,14 +3100,14 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     0,
     1
   );
-  const lakeRegion = THREE.MathUtils.smoothstep(lakeMacro, 0.66, 0.9);
-  const lakePocket = THREE.MathUtils.smoothstep(lakeDetail, 0.6, 0.9);
+  const lakeRegion = THREE.MathUtils.smoothstep(lakeMacro, 0.54, 0.84);
+  const lakePocket = THREE.MathUtils.smoothstep(lakeDetail, 0.5, 0.84);
   const lakeFlatness = THREE.MathUtils.smoothstep(1 - ridgeBand, 0.22, 0.88);
-  const lakeInland = THREE.MathUtils.smoothstep(macroContinents, 0.32, 0.86);
+  const lakeInland = THREE.MathUtils.smoothstep(macroContinents, 0.2, 0.8);
   const lakeSuppression = 1 - THREE.MathUtils.clamp(
-    mountainRegion * 0.76 + ridgeBand * 0.42 + Math.max(0, reliefWeight) * 0.26,
+    mountainRegion * 0.55 + ridgeBand * 0.28 + Math.max(0, reliefWeight) * 0.16,
     0,
-    0.95
+    0.9
   );
   const lakeMask = lakeRegion * lakePocket * lakeFlatness * lakeInland * lakeBiomeAllowance * lakeSuppression;
   const lakeDepthScale =
@@ -3124,7 +3124,7 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     steppeW * 1.3 +
     tundraW * 0.8 +
     oasisW * 1.1;
-  const lakeDepth = Math.pow(lakeMask, 1.24) * lakeDepthScale;
+  const lakeDepth = Math.pow(lakeMask, 0.96) * lakeDepthScale;
   const lakeDeepCoreMask = lakeMask * THREE.MathUtils.smoothstep(lakeDetail, 0.74, 0.95);
   const lakeDeepCoreAllowance = THREE.MathUtils.clamp(
     plainsW * 1.02 +
@@ -3173,6 +3173,16 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
   }
   if (biome === BIOME.GLACIER || glacierW > 0.54) {
     terrainHeight = Math.max(terrainHeight, SEA_LEVEL + 7);
+  }
+  if (lakeMask > 0.22) {
+    const postClampAllowance = THREE.MathUtils.clamp(
+      1 - (swampW * 0.7 + mangroveW * 0.78 + oasisW * 0.82 + glacierW * 0.4),
+      0.12,
+      1
+    );
+    const forcedLakeDepth =
+      1 + Math.floor(Math.pow((lakeMask - 0.22) / 0.78, 0.82) * (4 + postClampAllowance * 4.2));
+    terrainHeight = Math.min(terrainHeight, SEA_LEVEL - forcedLakeDepth);
   }
   if (terrainHeight <= SEA_LEVEL - 1) {
     const deepCoreDepth =
