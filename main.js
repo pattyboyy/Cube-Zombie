@@ -181,18 +181,18 @@ const TRIANGLE_ORDER = [0, 1, 2, 0, 2, 3];
 
 const DAY_SKY = new THREE.Color(0x98ceff);
 const SUNSET_SKY = new THREE.Color(0xf0a166);
-const NIGHT_SKY = new THREE.Color(0x0e162a);
+const NIGHT_SKY = new THREE.Color(0x080f20);
 const DAY_FOG = new THREE.Color(0xb8d8ff);
-const NIGHT_FOG = new THREE.Color(0x101c34);
+const NIGHT_FOG = new THREE.Color(0x0c1830);
 const SKY_TOP_DAY = new THREE.Color(0x5ea7ff);
 const SKY_HORIZON_DAY = new THREE.Color(0xbfdfff);
 const SKY_BOTTOM_DAY = new THREE.Color(0xeaf7ff);
 const SKY_TOP_SUNSET = new THREE.Color(0x8d61bf);
 const SKY_HORIZON_SUNSET = new THREE.Color(0xffb06e);
 const SKY_BOTTOM_SUNSET = new THREE.Color(0xffd39d);
-const SKY_TOP_NIGHT = new THREE.Color(0x071123);
-const SKY_HORIZON_NIGHT = new THREE.Color(0x1a2f51);
-const SKY_BOTTOM_NIGHT = new THREE.Color(0x0b172d);
+const SKY_TOP_NIGHT = new THREE.Color(0x040a17);
+const SKY_HORIZON_NIGHT = new THREE.Color(0x122848);
+const SKY_BOTTOM_NIGHT = new THREE.Color(0x071426);
 const SUN_LIGHT_DAY = new THREE.Color(0xffffff);
 const SUN_LIGHT_SUNSET = new THREE.Color(0xffbc7a);
 const MOON_LIGHT_COLOR = new THREE.Color(0xa8c0ff);
@@ -214,8 +214,8 @@ const CLOUD_ALTITUDE_RANGE = 26;
 const CLOUD_DRIFT_SPEED = 0.34;
 const CLOUD_MIN_SEPARATION = 58;
 const SKY_DOME_RADIUS = 540;
-const STAR_COUNT = 1900;
-const STARFIELD_RADIUS = SKY_DOME_RADIUS * 0.92;
+const STAR_COUNT = 4600;
+const STARFIELD_RADIUS = SKY_DOME_RADIUS * 0.94;
 const WATER_GRID_SEGMENTS = 88;
 const TORCH_SHOW_DAYLIGHT = 0.42;
 const TORCH_HIDE_DAYLIGHT = 0.58;
@@ -1134,7 +1134,7 @@ function createStarField() {
 
   for (let i = 0; i < STAR_COUNT; i += 1) {
     const theta = seededRandom() * Math.PI * 2;
-    const y = Math.pow(seededRandom(), 0.42) * 1.08 - 0.08;
+    const y = seededRandom() * 1.22 - 0.14;
     const radial = Math.sqrt(Math.max(0, 1 - y * y));
     const radius = STARFIELD_RADIUS * (0.92 + seededRandom() * 0.08);
     const x = Math.cos(theta) * radial * radius;
@@ -1143,7 +1143,7 @@ function createStarField() {
     positions.push(x, y * radius, z);
 
     const tintRoll = seededRandom();
-    const intensity = 0.58 + seededRandom() * 0.42;
+    const intensity = 0.7 + seededRandom() * 0.5;
     let r = 1.0;
     let g = 1.0;
     let b = 1.0;
@@ -1159,12 +1159,12 @@ function createStarField() {
     colors.push(r * intensity, g * intensity, b * intensity);
 
     const giantRoll = seededRandom();
-    const starSize = giantRoll > 0.988
-      ? 3.0 + seededRandom() * 1.5
-      : 0.95 + seededRandom() * 1.95;
+    const starSize = giantRoll > 0.99
+      ? 4.4 + seededRandom() * 3.8
+      : 1.2 + seededRandom() * 2.6;
     sizes.push(starSize);
     phases.push(seededRandom() * Math.PI * 2);
-    pulses.push(0.72 + seededRandom() * 2.3);
+    pulses.push(0.58 + seededRandom() * 2.6);
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -1189,11 +1189,11 @@ function createStarField() {
       varying float vTwinkle;
       void main() {
         vColor = color;
-        float twinkle = 0.72 + sin(uTime * aPulse + aPhase) * 0.28;
+        float twinkle = 0.68 + sin(uTime * aPulse + aPhase) * 0.32;
         vTwinkle = twinkle;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        float distanceScale = 320.0 / max(1.0, -mvPosition.z);
-        gl_PointSize = max(0.7, aSize * twinkle * distanceScale);
+        float distanceScale = 620.0 / max(8.0, -mvPosition.z);
+        gl_PointSize = clamp(aSize * twinkle * distanceScale, 1.0, 9.5);
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
@@ -1205,9 +1205,10 @@ function createStarField() {
         vec2 p = gl_PointCoord * 2.0 - 1.0;
         float radiusSq = dot(p, p);
         if (radiusSq > 1.0) discard;
-        float core = exp(-radiusSq * 8.0);
-        float halo = exp(-radiusSq * 2.4) * 0.38;
-        float alpha = (core + halo) * uOpacity * vTwinkle;
+        float core = exp(-radiusSq * 8.8);
+        float halo = exp(-radiusSq * 2.0) * 0.56;
+        float sparkle = 0.82 + smoothstep(0.58, 1.0, vTwinkle) * 0.34;
+        float alpha = (core + halo) * uOpacity * sparkle;
         gl_FragColor = vec4(vColor, alpha);
       }
     `,
@@ -1362,12 +1363,12 @@ function updateCloudLayer(delta, daylight) {
 
     if (layer.material instanceof THREE.MeshLambertMaterial) {
       const variantOpacity = variant === 1 ? 0.84 : variant === 2 ? 0.92 : 1.0;
-      layer.material.opacity = (0.14 + daylight * 0.55) * variantOpacity;
+      layer.material.opacity = (0.06 + daylight * 0.58) * variantOpacity;
       const tint = variant === 1 ? 0.96 : variant === 2 ? 0.92 : 1.0;
       layer.material.color.setRGB(
-        (0.58 + daylight * 0.4) * tint,
-        (0.62 + daylight * 0.36) * tint,
-        (0.7 + daylight * 0.28) * tint
+        (0.4 + daylight * 0.58) * tint,
+        (0.44 + daylight * 0.54) * tint,
+        (0.52 + daylight * 0.46) * tint
       );
     }
   }
@@ -6733,14 +6734,14 @@ function updateLighting(delta) {
   fillLight.intensity = 0.24 + daylight * 0.62;
   fillLight.color.copy(HEMI_SKY_NIGHT).lerp(HEMI_SKY_DAY, daylight);
   fillLight.groundColor.copy(HEMI_GROUND_NIGHT).lerp(HEMI_GROUND_DAY, daylight);
-  moonBounceLight.intensity = moonGlow * 0.24 + duskDawn * 0.01;
+  moonBounceLight.intensity = moonGlow * 0.08 + duskDawn * 0.008;
   moonBounceLight.color.copy(MOON_BOUNCE_SKY);
   moonBounceLight.groundColor.copy(MOON_BOUNCE_GROUND);
 
-  terrainMaterial.emissive.copy(MOON_LIGHT_COLOR).multiplyScalar(moonGlow * 0.058);
+  terrainMaterial.emissive.setRGB(0, 0, 0);
   for (const material of Object.values(floraMaterials)) {
     if (material && material.emissive instanceof THREE.Color) {
-      material.emissive.copy(MOON_LIGHT_COLOR).multiplyScalar(moonGlow * 0.072);
+      material.emissive.setRGB(0, 0, 0);
     }
   }
   renderer.toneMappingExposure = 0.9 + daylight * 0.23 + duskDawn * 0.06;
@@ -6770,8 +6771,12 @@ function updateLighting(delta) {
     starField.position.copy(camera.position);
     starField.rotation.y += delta * 0.0046;
     starField.rotation.z = Math.sin(dayPhase * 0.23) * 0.045;
-    const starVisibility = THREE.MathUtils.clamp(Math.pow(1 - daylight, 1.7), 0, 1);
-    const twinkle = 0.86 + Math.sin(dayPhase * 3.6) * 0.08 + Math.sin(dayPhase * 11.1) * 0.04;
+    const starVisibility = THREE.MathUtils.clamp(
+      Math.pow(1 - daylight, 1.12) * (0.76 + nightStrength * 0.42),
+      0,
+      1
+    );
+    const twinkle = 0.93 + Math.sin(dayPhase * 4.2) * 0.07 + Math.sin(dayPhase * 13.8) * 0.05;
     starMaterial.uniforms.uOpacity.value = starVisibility * twinkle;
     starMaterial.uniforms.uTime.value += delta;
   }
