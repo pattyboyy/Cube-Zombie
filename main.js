@@ -610,8 +610,7 @@ configureTerrainDetail(terrainMaterial);
 const floraMaterials = createFloraMaterials();
 
 function configureTerrainDetail(material) {
-  material.customProgramCacheKey = undefined;
-  material.onBeforeCompile = null;
+  // Keep default MeshStandardMaterial shader hooks intact.
   material.needsUpdate = true;
 }
 
