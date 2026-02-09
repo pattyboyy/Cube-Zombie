@@ -1609,9 +1609,9 @@ function createCloudLayer() {
     const geometry = new THREE.PlaneGeometry(1, 1);
     const material = new THREE.MeshLambertMaterial({
       map: createCloudTexture(variant),
-      transparent: true,
-      alphaTest: 0.18,
-      depthWrite: false,
+      transparent: false,
+      alphaTest: 0.24,
+      depthWrite: true,
       side: THREE.DoubleSide,
       color: 0xffffff,
     });
@@ -5401,8 +5401,7 @@ function applyFloraTextureDetail(ctx, size, kind) {
 
       const alphaScale = THREE.MathUtils.clamp(0.88 + (baseNoise - 0.5) * 0.3, 0.68, 1.0);
       const shapedAlpha = Math.round(alpha * alphaScale);
-      const quantizedAlpha = Math.round((shapedAlpha / 255) * 5) / 5;
-      pixels[index + 3] = quantizedAlpha <= 0.12 ? 0 : Math.round(quantizedAlpha * 255);
+      pixels[index + 3] = shapedAlpha >= 132 ? 255 : 0;
     }
   }
 
@@ -5650,8 +5649,9 @@ function createFloraTexture(kind) {
 function createFloraMaterialFromTexture(texture) {
   const material = new THREE.MeshLambertMaterial({
     map: texture,
-    transparent: true,
-    alphaTest: 0.45,
+    transparent: false,
+    alphaTest: 0.5,
+    depthWrite: true,
     side: THREE.DoubleSide,
     vertexColors: true,
   });
