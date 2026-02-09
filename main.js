@@ -10,6 +10,8 @@ const MAX_CHUNK_LOADS_PER_FRAME = 1;
 const MAX_CHUNK_MESHES_PER_FRAME = 1;
 const CHUNK_LOAD_BUDGET_MS = 5;
 const CHUNK_MESH_BUDGET_MS = 5;
+const CHUNK_STREAM_TOTAL_BUDGET_MS = 6.4;
+const CHUNK_STREAM_MIN_MESH_BUDGET_MS = 1.2;
 const CHUNK_PREFETCH_EDGE_THRESHOLD = 0.64;
 const CHUNK_PREFETCH_INTERVAL = 0.12;
 const CHUNK_PREFETCH_MIN_MOVE = 0.012;
@@ -5404,6 +5406,8 @@ function processChunkQueue(
       loaded += 1;
     }
   }
+
+  return loaded;
 }
 
 function processChunkMeshQueue(
@@ -5424,6 +5428,8 @@ function processChunkMeshQueue(
     rebuildChunkMesh(chunk);
     meshed += 1;
   }
+
+  return meshed;
 }
 
 function buildWater() {
@@ -7065,9 +7071,20 @@ function updateStreaming(delta) {
     refreshChunkTargets(cameraChunkX, cameraChunkZ);
   }
 
+  const framePressure = THREE.MathUtils.clamp((delta * 1000 - 16.7) / 18, 0, 1);
+  const totalBudget = CHUNK_STREAM_TOTAL_BUDGET_MS * (1 - framePressure * 0.5);
+  const loadBudget = CHUNK_LOAD_BUDGET_MS * (1 - framePressure * 0.35);
   maybePrefetchChunks(cameraChunkX, cameraChunkZ, delta);
-  processChunkQueue(cameraChunkX, cameraChunkZ);
-  processChunkMeshQueue();
+  const streamStart = performance.now();
+  const loaded = processChunkQueue(cameraChunkX, cameraChunkZ, MAX_CHUNK_LOADS_PER_FRAME, loadBudget);
+  const elapsed = performance.now() - streamStart;
+  const remaining = totalBudget - elapsed - (loaded > 0 ? 0.3 : 0);
+  if (remaining > CHUNK_STREAM_MIN_MESH_BUDGET_MS || loaded === 0) {
+    processChunkMeshQueue(
+      MAX_CHUNK_MESHES_PER_FRAME,
+      Math.max(CHUNK_STREAM_MIN_MESH_BUDGET_MS, Math.min(CHUNK_MESH_BUDGET_MS, remaining))
+    );
+  }
   updateWaterPosition();
 }
 
