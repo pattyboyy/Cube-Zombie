@@ -651,8 +651,16 @@ function configureTerrainDetail(material) {
       float strata = floor(fract(vDetailWorldPos.y * 0.48 + grainA * 0.37) * 3.0) / 3.0;
       float checker = mod(pixelCell.x + pixelCell.y + floor(vDetailWorldPos.y * 0.5), 2.0);
       float detail = 0.78 + grain * 0.18 + strata * 0.07 + checker * 0.04;
-      detail = floor(detail * 6.0) / 6.0;
-      diffuseColor.rgb *= clamp(detail, 0.68, 1.08);
+      detail = floor(detail * 5.0) / 5.0;
+      vec3 stylized = diffuseColor.rgb * clamp(detail, 0.62, 1.14);
+      vec3 warmTint = vec3(1.08, 1.03, 0.95);
+      vec3 coolTint = vec3(0.92, 0.98, 1.08);
+      float tintMix = floor(grainA * 3.0) * 0.5;
+      stylized *= mix(coolTint, warmTint, tintMix);
+      float contour = step(0.78, fract(vDetailWorldPos.y * 0.42 + grainB * 0.35));
+      stylized *= 1.0 - contour * 0.2;
+      stylized = floor(stylized * 6.0) / 6.0;
+      diffuseColor.rgb = clamp(stylized, 0.0, 1.0);
       `
       );
   };
@@ -5673,7 +5681,7 @@ function configureFloraMaterial(material) {
       float phase = dot(worldRoot.xz, vec2(0.28, 0.19));
       float gust = sin(uTime * (1.6 + uWindStrength * 1.8) + phase * 2.2);
       float flutter = sin(uTime * 6.2 + phase * 7.1) * 0.35;
-      float sway = (gust * 0.22 + flutter * 0.08) * (0.09 + uWindStrength * 0.24) * pow(vFloraTop, 1.35);
+      float sway = (gust * 0.22 + flutter * 0.08) * (0.16 + uWindStrength * 0.4) * pow(vFloraTop, 1.15);
       transformed.x += uWindDir.x * sway;
       transformed.z += uWindDir.y * sway;
       vFloraSway = sway;
@@ -5699,7 +5707,9 @@ function configureFloraMaterial(material) {
       float dayTint = mix(0.88, 1.03, uDaylight);
       float shade = dayTint + topBand * 0.08 + swayBand * 0.04;
       shade = floor(shade * 6.0) / 6.0;
-      diffuseColor.rgb *= clamp(shade, 0.72, 1.12);
+      vec3 floraColor = diffuseColor.rgb * clamp(shade, 0.68, 1.16);
+      floraColor = floor(floraColor * 5.0) / 5.0;
+      diffuseColor.rgb = clamp(floraColor, 0.0, 1.0);
       `
       );
   };
@@ -6412,23 +6422,23 @@ function buildWater() {
         vec3 normalDir = normalize(vWorldNormal);
         vec3 viewDir = normalize(cameraPosition - vWorldPos);
         float fresnel = pow(1.0 - clamp(dot(viewDir, normalDir), 0.0, 1.0), 2.6);
-        float fresnelStep = floor(fresnel * 4.0) / 4.0;
+        float fresnelStep = floor(fresnel * 3.0) / 3.0;
         float ripple = 0.5 + vWave * 1.7;
-        float crest = smoothstep(0.08, 0.2, vWave + uRainStrength * 0.14);
+        float crest = smoothstep(0.03, 0.16, vWave + uRainStrength * 0.14);
         vec3 highlightDir = normalize(vec3(uWindDir.x * 0.36 + 0.22, 1.0, uWindDir.y * 0.36 + 0.18));
-        float spec = pow(max(dot(reflect(-viewDir, normalDir), highlightDir), 0.0), 36.0);
-        spec = floor(spec * 4.0) / 4.0;
+        float spec = pow(max(dot(reflect(-viewDir, normalDir), highlightDir), 0.0), 26.0);
+        spec = floor(spec * 3.0) / 3.0;
 
         vec3 deep = mix(uDeepColor * 0.45, uDeepColor, uDaylight);
         vec3 shallow = mix(uShallowColor * 0.42, uShallowColor, uDaylight);
         vec3 color = mix(deep, shallow, clamp(0.22 + fresnelStep * 0.92 + ripple * 0.06, 0.0, 1.0));
-        color = mix(color, vec3(0.86, 0.95, 1.0), crest * (0.22 + uRainStrength * 0.22));
-        color += spec * (0.06 + uDaylight * 0.16);
+        color = mix(color, vec3(0.9, 0.97, 1.0), crest * (0.34 + uRainStrength * 0.24));
+        color += spec * (0.08 + uDaylight * 0.19);
         color = mix(color, color * vec3(0.76, 0.84, 0.95), clamp(uRainStrength * 0.4, 0.0, 1.0));
-        color = floor(color * 7.0) / 7.0;
+        color = floor(color * 5.0) / 5.0;
         float alpha = clamp(mix(0.2, 0.34, uDaylight) + fresnel * 0.18, 0.16, 0.62);
         alpha = clamp(alpha + uRainStrength * 0.08, 0.16, 0.74);
-        alpha = floor(alpha * 6.0) / 6.0;
+        alpha = floor(alpha * 4.0) / 4.0;
 
         gl_FragColor = vec4(color, alpha);
         #include <fog_fragment>
