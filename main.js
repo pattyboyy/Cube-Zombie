@@ -7801,7 +7801,7 @@ function applyVerticalPlayerPhysics(delta) {
 
 function updateMovement(delta) {
   if (playerDead) return;
-  if (!controls.isLocked) return;
+  if (!controls.isLocked && !godModeEnabled) return;
 
   const forwardInput = (pressedKeys.has("KeyW") ? 1 : 0) - (pressedKeys.has("KeyS") ? 1 : 0);
   const strafeInput = (pressedKeys.has("KeyD") ? 1 : 0) - (pressedKeys.has("KeyA") ? 1 : 0);
@@ -8183,6 +8183,9 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "KeyG") {
     if (event.repeat) return;
     godModeEnabled = !godModeEnabled;
+    if (godModeEnabled && !controls.isLocked && !playerDead) {
+      controls.lock();
+    }
     if (!godModeEnabled) {
       while (collidesPlayerAt(camera.position.x, camera.position.y, camera.position.z)) {
         camera.position.y += 0.5;
