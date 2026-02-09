@@ -266,6 +266,14 @@ const ZOMBIE_SPAWN_MAX_RADIUS = 54;
 const ZOMBIE_SPAWN_INTERVAL = 0.72;
 const ZOMBIE_DESPAWN_RADIUS = 146;
 const ZOMBIE_ACTIVE_DAYLIGHT = 0.62;
+const ZOMBIE_SIM_NEAR_DISTANCE = 36;
+const ZOMBIE_SIM_MID_DISTANCE = 68;
+const ZOMBIE_SIM_STEP_NEAR = 1 / 60;
+const ZOMBIE_SIM_STEP_MID = 1 / 30;
+const ZOMBIE_SIM_STEP_FAR = 1 / 18;
+const ZOMBIE_SIM_MAX_DELTA = 0.085;
+const ZOMBIE_RAGDOLL_LOD_DISTANCE = 62;
+const ZOMBIE_RAGDOLL_GROUND_CHECK_FAR_INTERVAL = 0.11;
 
 const NEIGHBOR_OFFSETS_2D = [
   [1, 0],
@@ -466,6 +474,7 @@ const lastPlayerPos = new THREE.Vector3();
 const playerBoundsScratch = { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 };
 const shotRaycaster = new THREE.Raycaster();
 const shotNdc = new THREE.Vector2(0, 0);
+const shotTargets = [];
 const projectileAxis = new THREE.Vector3(0, 1, 0);
 const gunMuzzleLocal = new THREE.Vector3(0, 0.03, -0.65);
 const gunMuzzleWorldScratch = new THREE.Vector3();
@@ -5906,6 +5915,7 @@ function startZombieDeath(zombie, shotDirection) {
     .copy(shotDirection)
     .multiplyScalar(5.6 + Math.random() * 2.7);
   zombie.ragdollVelocity.y = 2.3 + Math.random() * 2.6;
+  zombie.ragdollGroundTimer = 0;
   zombie.hitImpulse.copy(shotDirection).multiplyScalar(2.3 + Math.random() * 1.1);
   zombieKills += 1;
   zombie.hitMeshes.length = 0;
@@ -6014,6 +6024,8 @@ function createZombie(worldX, footY, worldZ) {
     leftLeg: null,
     rightLeg: null,
     hitMeshes: [],
+    simAccumulator: Math.random() * ZOMBIE_SIM_STEP_MID,
+    ragdollGroundTimer: 0,
   };
 
   zombie.group.position.set(worldX, footY, worldZ);
@@ -6259,6 +6271,9 @@ function updateZombies(delta, daylight) {
     1
   );
   const activityFactor = 0.56 + nightFactor * 0.44;
+  const nearSimDistanceSq = ZOMBIE_SIM_NEAR_DISTANCE * ZOMBIE_SIM_NEAR_DISTANCE;
+  const midSimDistanceSq = ZOMBIE_SIM_MID_DISTANCE * ZOMBIE_SIM_MID_DISTANCE;
+  const ragdollLodDistanceSq = ZOMBIE_RAGDOLL_LOD_DISTANCE * ZOMBIE_RAGDOLL_LOD_DISTANCE;
 
   zombieSpawnTimer -= delta;
   if (!playerDead && zombieSpawnTimer <= 0 && zombies.length < ZOMBIE_MAX_COUNT) {
@@ -6293,6 +6308,12 @@ function updateZombies(delta, daylight) {
 
     if (zombie.isDying) {
       zombie.deathTimer += delta;
+      const ragdollGroundInterval = distSq > ragdollLodDistanceSq ? ZOMBIE_RAGDOLL_GROUND_CHECK_FAR_INTERVAL : 0;
+      if (ragdollGroundInterval > 0) zombie.ragdollGroundTimer -= delta;
+      const shouldCheckGround = ragdollGroundInterval <= 0 || zombie.ragdollGroundTimer <= 0;
+      if (shouldCheckGround && ragdollGroundInterval > 0) {
+        zombie.ragdollGroundTimer = ragdollGroundInterval;
+      }
       let settledParts = 0;
 
       for (const part of zombie.ragdollParts) {
@@ -6301,24 +6322,26 @@ function updateZombies(delta, daylight) {
         part.velocity.multiplyScalar(Math.max(0, 1 - part.drag * delta));
         partMesh.position.addScaledVector(part.velocity, delta);
 
-        const groundTop = sampleGroundTopY(
-          partMesh.position.x,
-          partMesh.position.z,
-          Math.floor(partMesh.position.y + ZOMBIE_HEIGHT + 3),
-          true
-        );
         let grounded = false;
-        if (groundTop >= 0) {
-          const groundY = groundTop + 1 + part.radiusY;
-          if (partMesh.position.y < groundY) {
-            partMesh.position.y = groundY;
-            grounded = true;
-            if (part.velocity.y < 0) {
-              part.velocity.y *= -ZOMBIE_RAGDOLL_BOUNCE;
+        if (shouldCheckGround) {
+          const groundTop = sampleGroundTopY(
+            partMesh.position.x,
+            partMesh.position.z,
+            Math.floor(partMesh.position.y + ZOMBIE_HEIGHT + 3),
+            true
+          );
+          if (groundTop >= 0) {
+            const groundY = groundTop + 1 + part.radiusY;
+            if (partMesh.position.y < groundY) {
+              partMesh.position.y = groundY;
+              grounded = true;
+              if (part.velocity.y < 0) {
+                part.velocity.y *= -ZOMBIE_RAGDOLL_BOUNCE;
+              }
+              part.velocity.x *= 0.56;
+              part.velocity.z *= 0.56;
+              if (Math.abs(part.velocity.y) < 0.35) part.velocity.y = 0;
             }
-            part.velocity.x *= 0.56;
-            part.velocity.z *= 0.56;
-            if (Math.abs(part.velocity.y) < 0.35) part.velocity.y = 0;
           }
         }
 
@@ -6362,7 +6385,25 @@ function updateZombies(delta, daylight) {
       continue;
     }
 
-    const dist = Math.max(0.0001, Math.sqrt(distSq));
+    const simStep = distSq <= nearSimDistanceSq
+      ? ZOMBIE_SIM_STEP_NEAR
+      : distSq <= midSimDistanceSq
+        ? ZOMBIE_SIM_STEP_MID
+        : ZOMBIE_SIM_STEP_FAR;
+    zombie.simAccumulator += delta;
+    if (zombie.simAccumulator < simStep) {
+      if (zombie.hitFlash > 0) {
+        zombie.hitFlash = Math.max(0, zombie.hitFlash - delta * 5.4);
+      }
+      zombie.headMaterial.emissiveIntensity = zombie.hitFlash * 0.95;
+      continue;
+    }
+    const simDelta = Math.min(ZOMBIE_SIM_MAX_DELTA, zombie.simAccumulator);
+    zombie.simAccumulator = 0;
+
+    {
+      const delta = simDelta;
+      const dist = Math.max(0.0001, Math.sqrt(distSq));
     let staggerRatio = 0;
     if (zombie.hitStagger > 0) {
       staggerRatio = zombie.hitStagger / ZOMBIE_HIT_STAGGER_TIME;
@@ -6528,7 +6569,8 @@ function updateZombies(delta, daylight) {
     if (zombie.hitFlash > 0) {
       zombie.hitFlash = Math.max(0, zombie.hitFlash - delta * 5.4);
     }
-    zombie.headMaterial.emissiveIntensity = zombie.hitFlash * 0.95;
+      zombie.headMaterial.emissiveIntensity = zombie.hitFlash * 0.95;
+    }
   }
 }
 
@@ -6549,16 +6591,22 @@ function shootGun() {
 
   shotRaycaster.setFromCamera(shotNdc, camera);
   shotRaycaster.far = GUN_RANGE;
-  const targets = [];
+  shotTargets.length = 0;
+  const shotOrigin = shotRaycaster.ray.origin;
+  const maxTargetDistanceSq = GUN_RANGE * GUN_RANGE + 9;
   for (const zombie of zombies) {
     if (zombie.removed || zombie.isDying) continue;
-    for (const hitMesh of zombie.hitMeshes) targets.push(hitMesh);
+    const zx = zombie.group.position.x - shotOrigin.x;
+    const zy = zombie.group.position.y + ZOMBIE_HEIGHT * 0.5 - shotOrigin.y;
+    const zz = zombie.group.position.z - shotOrigin.z;
+    if (zx * zx + zy * zy + zz * zz > maxTargetDistanceSq) continue;
+    for (const hitMesh of zombie.hitMeshes) shotTargets.push(hitMesh);
   }
 
   let zombieHit = null;
   let zombieHitDistance = Number.POSITIVE_INFINITY;
-  if (targets.length > 0) {
-    const hits = shotRaycaster.intersectObjects(targets, false);
+  if (shotTargets.length > 0) {
+    const hits = shotRaycaster.intersectObjects(shotTargets, false);
     if (hits.length > 0) {
       zombieHit = hits[0].object.userData.zombie ?? null;
       zombieHitDistance = hits[0].distance;
