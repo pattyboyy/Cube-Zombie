@@ -393,7 +393,6 @@ function setUiVisibility(visible) {
   const hidden = !uiVisible;
   document.body.classList.toggle("ui-hidden", hidden);
   if (hud) hud.setAttribute("aria-hidden", hidden ? "true" : "false");
-  if (healthUi) healthUi.setAttribute("aria-hidden", hidden ? "true" : "false");
   if (uiToggleHint) {
     uiToggleHint.dataset.open = uiVisible ? "true" : "false";
     uiToggleHint.textContent = uiVisible ? "HUD ON  -  U to hide" : "HUD OFF  -  U to show";
