@@ -30,8 +30,10 @@ const FOG_NEAR_DISTANCE = Math.max(
 const MIN_TERRAIN_HEIGHT = 4;
 const MAX_TERRAIN_HEIGHT = 44;
 const SEA_LEVEL = 12;
-const RIVER_WATER_MIN_INTENSITY = 0.45;
-const RIVER_WATER_MAX_DEPTH = 3;
+const RIVER_WATER_MIN_INTENSITY = 0.34;
+const RIVER_WATER_MAX_DEPTH = 5;
+const LAKE_WATER_MAX_DEPTH = 6;
+const POND_WATER_MAX_DEPTH = 3;
 
 const PLAYER_WALK_SPEED = 7.2;
 const PLAYER_SPRINT_MULTIPLIER = 1.55;
@@ -2848,19 +2850,26 @@ function getRiverIntensity(worldX, worldZ) {
   const trunk = Math.abs(fbm2D((x + 140) * 0.0062, (z - 90) * 0.0062, 4));
   const branch = Math.abs(fbm2D((x - 420) * 0.012, (z + 310) * 0.012, 3));
   const meander = Math.abs(fbm2D((x + 780) * 0.0032, (z - 650) * 0.0032, 2));
-  const channelDistance = trunk * 0.56 + branch * 0.29 + meander * 0.15;
-  const river = THREE.MathUtils.clamp((0.19 - channelDistance) / 0.19, 0, 1);
+  const channelDistance = trunk * 0.52 + branch * 0.31 + meander * 0.17;
+  const river = THREE.MathUtils.clamp((0.24 - channelDistance) / 0.24, 0, 1);
   return THREE.MathUtils.smoothstep(river, 0, 1);
 }
 
 function getRiverWaterSurfaceY(worldX, worldZ, terrainHeight, biome, riverIntensity) {
   let waterSurfaceY = -1;
+  const riverStrength = THREE.MathUtils.clamp(
+    (riverIntensity - RIVER_WATER_MIN_INTENSITY) / (1 - RIVER_WATER_MIN_INTENSITY),
+    0,
+    1
+  );
 
-  if (riverIntensity > RIVER_WATER_MIN_INTENSITY && terrainHeight <= SEA_LEVEL + 4) {
+  if (riverIntensity > RIVER_WATER_MIN_INTENSITY && terrainHeight <= SEA_LEVEL + 22) {
     const localOffset = Math.round(
       fbm2D((worldX + 170) * 0.0082, (worldZ - 260) * 0.0082, 2)
     );
-    const streamSurfaceY = SEA_LEVEL + 1 + THREE.MathUtils.clamp(localOffset, -1, 1);
+    const seaStreamSurfaceY = SEA_LEVEL + 1 + THREE.MathUtils.clamp(localOffset, -1, 1);
+    const uplandStreamSurfaceY = terrainHeight + 2 + Math.floor(riverStrength * 2.2);
+    const streamSurfaceY = Math.max(seaStreamSurfaceY, uplandStreamSurfaceY);
     waterSurfaceY = Math.max(waterSurfaceY, streamSurfaceY);
   }
 
@@ -2879,10 +2888,13 @@ function getRiverWaterSurfaceY(worldX, worldZ, terrainHeight, biome, riverIntens
     waterSurfaceY = Math.max(waterSurfaceY, mangroveSurfaceY);
   }
 
-  if (waterSurfaceY < 0 && terrainHeight <= SEA_LEVEL + 3) {
-    const lakeMask = fbm2D((worldX + 910) * 0.0021, (worldZ - 740) * 0.0021, 3) * 0.5 + 0.5;
-    if (lakeMask > 0.85) {
-      waterSurfaceY = SEA_LEVEL + 1;
+  if (waterSurfaceY < 0 && terrainHeight <= SEA_LEVEL + 22) {
+    const lakeMacro = fbm2D((worldX + 910) * 0.0017, (worldZ - 740) * 0.0017, 4) * 0.5 + 0.5;
+    const lakeShape = fbm2D((worldX - 360) * 0.0056, (worldZ + 510) * 0.0056, 3) * 0.5 + 0.5;
+    const lakeBasin = lakeMacro - Math.abs(lakeShape - 0.5) * 0.58;
+    if (lakeBasin > 0.58) {
+      const lakeDepth = 2 + Math.floor((lakeBasin - 0.58) * 10);
+      waterSurfaceY = terrainHeight + THREE.MathUtils.clamp(lakeDepth, 2, LAKE_WATER_MAX_DEPTH);
     }
   }
 
@@ -2897,6 +2909,27 @@ function getRiverWaterSurfaceY(worldX, worldZ, terrainHeight, biome, riverIntens
     const mangroveLakeMask = fbm2D((worldX + 640) * 0.0024, (worldZ - 520) * 0.0024, 3) * 0.5 + 0.5;
     if (mangroveLakeMask > 0.72) {
       waterSurfaceY = SEA_LEVEL + 1;
+    }
+  }
+
+  if (waterSurfaceY < 0 && terrainHeight <= SEA_LEVEL + 24) {
+    const wetBiome =
+      biome === BIOME.FOREST ||
+      biome === BIOME.PLAINS ||
+      biome === BIOME.SWAMP ||
+      biome === BIOME.JUNGLE ||
+      biome === BIOME.CHERRY_GROVE ||
+      biome === BIOME.REDWOOD ||
+      biome === BIOME.MANGROVE ||
+      biome === BIOME.HEATH;
+    if (wetBiome) {
+      const pondMask = fbm2D((worldX - 140) * 0.011, (worldZ + 270) * 0.011, 2) * 0.5 + 0.5;
+      const pondRim = fbm2D((worldX + 320) * 0.025, (worldZ - 410) * 0.025, 1) * 0.5 + 0.5;
+      const pondSignal = pondMask - Math.abs(pondRim - 0.5) * 0.36;
+      if (pondSignal > 0.84) {
+        const pondDepth = pondSignal > 0.9 ? 3 : 2;
+        waterSurfaceY = terrainHeight + Math.min(pondDepth, POND_WATER_MAX_DEPTH);
+      }
     }
   }
 
@@ -4554,15 +4587,24 @@ function generateChunkData(cx, cz) {
         0,
         1
       );
-      if (biome === BIOME.OASIS && riverIntensity > RIVER_WATER_MIN_INTENSITY) {
+      const hasRiverChannel = riverIntensity > RIVER_WATER_MIN_INTENSITY;
+      if (biome === BIOME.OASIS && hasRiverChannel) {
         const depthRequirement = THREE.MathUtils.lerp(0.6, 0.15, riverStrength);
-        if (channelDepth < depthRequirement || riverNeighborCount < 1) continue;
-      } else if (biome === BIOME.MANGROVE && riverIntensity > RIVER_WATER_MIN_INTENSITY) {
+        const minNeighbors = riverStrength > 0.72 ? 0 : 1;
+        if (channelDepth < depthRequirement || riverNeighborCount < minNeighbors) continue;
+      } else if (biome === BIOME.MANGROVE && hasRiverChannel) {
         const depthRequirement = THREE.MathUtils.lerp(0.52, 0.12, riverStrength);
-        if (channelDepth < depthRequirement || riverNeighborCount < 1) continue;
-      } else if (biome !== BIOME.SWAMP && riverIntensity > RIVER_WATER_MIN_INTENSITY) {
-        const depthRequirement = THREE.MathUtils.lerp(1.0, 0.25, riverStrength);
-        if (channelDepth < depthRequirement || riverNeighborCount < 1) continue;
+        const minNeighbors = riverStrength > 0.72 ? 0 : 1;
+        if (channelDepth < depthRequirement || riverNeighborCount < minNeighbors) continue;
+      } else if (biome !== BIOME.SWAMP && hasRiverChannel) {
+        if (riverStrength < 0.78) {
+          const depthRequirement = THREE.MathUtils.lerp(0.62, 0.12, riverStrength);
+          const minNeighbors = riverStrength > 0.7 ? 0 : 1;
+          if (channelDepth < depthRequirement || riverNeighborCount < minNeighbors) continue;
+        }
+      } else if (channelDepth < 0.22) {
+        // Lakes/ponds only fill in local basins.
+        continue;
       }
 
       const waterSurfaceY = getRiverWaterSurfaceY(
@@ -4581,11 +4623,16 @@ function generateChunkData(cx, cz) {
 
       const startY = Math.max(terrainHeight + 1, 0);
       const rimDepthCap = Math.max(1, neighborMinHeight - terrainHeight + 1);
-      const maxBiomeDepth =
-        biome === BIOME.SWAMP ? 2 : biome === BIOME.OASIS || biome === BIOME.MANGROVE ? 3 : RIVER_WATER_MAX_DEPTH;
+      const requestedDepth = Math.max(1, effectiveSurfaceY - terrainHeight - 1);
+      let maxBiomeDepth =
+        biome === BIOME.SWAMP ? 3 : biome === BIOME.OASIS || biome === BIOME.MANGROVE ? 4 : RIVER_WATER_MAX_DEPTH;
+      if (!hasRiverChannel) {
+        maxBiomeDepth = Math.max(maxBiomeDepth, POND_WATER_MAX_DEPTH + 1);
+        maxBiomeDepth = Math.min(maxBiomeDepth + 1, LAKE_WATER_MAX_DEPTH);
+      }
       const depthCap = Math.min(
         maxBiomeDepth,
-        rimDepthCap + Math.floor(riverStrength * 1.5)
+        rimDepthCap + Math.floor(riverStrength * 2.2) + Math.max(0, requestedDepth - 2)
       );
       const endY = Math.min(
         effectiveSurfaceY - 1,
@@ -6536,116 +6583,7 @@ function buildWater() {
     waterMesh = null;
     waterUniforms = null;
   }
-
-  const geometry = new THREE.PlaneGeometry(
-    WATER_PLANE_SIZE,
-    WATER_PLANE_SIZE,
-    WATER_GRID_SEGMENTS,
-    WATER_GRID_SEGMENTS
-  );
-  waterUniforms = {
-    uTime: { value: 0 },
-    uDaylight: { value: 1 },
-    uDeepColor: { value: new THREE.Color(0x13345f) },
-    uShallowColor: { value: new THREE.Color(0x62a8df) },
-    uRainStrength: { value: 0 },
-    uWindDir: { value: new THREE.Vector2(1, 0) },
-  };
-
-  const material = new THREE.ShaderMaterial({
-    uniforms: waterUniforms,
-    vertexShader: `
-      uniform float uTime;
-      uniform float uRainStrength;
-      uniform vec2 uWindDir;
-      varying vec3 vWorldPos;
-      varying vec3 vWorldNormal;
-      varying float vWave;
-      #include <fog_pars_vertex>
-
-      float waveHeight(vec2 p, float t) {
-        vec2 windDir = normalize(uWindDir + vec2(0.0001, 0.0));
-        float alongWind = dot(p, windDir);
-        float wave = sin((p.x + t * 5.8) * 0.035) * 0.11;
-        wave += cos((p.y - t * 4.2) * 0.041) * 0.08;
-        wave += sin((alongWind + t * 6.4) * 0.052) * (0.025 + uRainStrength * 0.03);
-        wave += sin((p.x + p.y + t * 2.4) * 0.028) * 0.06;
-        wave += sin((p.x * 0.22 + p.y * 0.18 + t * 11.6)) * (0.015 + uRainStrength * 0.08);
-        wave += cos((p.x * 0.17 - p.y * 0.26 - t * 9.8)) * uRainStrength * 0.055;
-        return wave;
-      }
-
-      void main() {
-        vec3 localPos = position;
-        float wave = waveHeight(localPos.xy, uTime);
-        localPos.z += wave;
-
-        float eps = 0.3;
-        float waveDx = waveHeight(localPos.xy + vec2(eps, 0.0), uTime);
-        float waveDy = waveHeight(localPos.xy + vec2(0.0, eps), uTime);
-        vec3 tangentX = normalize(vec3(eps, 0.0, waveDx - wave));
-        vec3 tangentY = normalize(vec3(0.0, eps, waveDy - wave));
-        vec3 localNormal = normalize(cross(tangentY, tangentX));
-
-        vec4 worldPos = modelMatrix * vec4(localPos, 1.0);
-        vWorldPos = worldPos.xyz;
-        vWorldNormal = normalize(normalMatrix * localNormal);
-        vWave = wave;
-
-        vec4 mvPosition = viewMatrix * worldPos;
-        gl_Position = projectionMatrix * mvPosition;
-        #include <fog_vertex>
-      }
-    `,
-    fragmentShader: `
-      uniform float uDaylight;
-      uniform float uRainStrength;
-      uniform vec2 uWindDir;
-      uniform vec3 uDeepColor;
-      uniform vec3 uShallowColor;
-      varying vec3 vWorldPos;
-      varying vec3 vWorldNormal;
-      varying float vWave;
-      #include <fog_pars_fragment>
-
-      void main() {
-        vec3 normalDir = normalize(vWorldNormal);
-        vec3 viewDir = normalize(cameraPosition - vWorldPos);
-        float fresnel = pow(1.0 - clamp(dot(viewDir, normalDir), 0.0, 1.0), 2.6);
-        float fresnelStep = floor(fresnel * 3.0) / 3.0;
-        float ripple = 0.5 + vWave * 1.7;
-        float crest = smoothstep(0.03, 0.16, vWave + uRainStrength * 0.14);
-        vec3 highlightDir = normalize(vec3(uWindDir.x * 0.36 + 0.22, 1.0, uWindDir.y * 0.36 + 0.18));
-        float spec = pow(max(dot(reflect(-viewDir, normalDir), highlightDir), 0.0), 26.0);
-        spec = floor(spec * 3.0) / 3.0;
-
-        vec3 deep = mix(uDeepColor * 0.45, uDeepColor, uDaylight);
-        vec3 shallow = mix(uShallowColor * 0.42, uShallowColor, uDaylight);
-        vec3 color = mix(deep, shallow, clamp(0.22 + fresnelStep * 0.92 + ripple * 0.06, 0.0, 1.0));
-        color = mix(color, vec3(0.9, 0.97, 1.0), crest * (0.34 + uRainStrength * 0.24));
-        color += spec * (0.08 + uDaylight * 0.19);
-        color = mix(color, color * vec3(0.76, 0.84, 0.95), clamp(uRainStrength * 0.4, 0.0, 1.0));
-        color = floor(color * 5.0) / 5.0;
-        float alpha = clamp(mix(0.2, 0.34, uDaylight) + fresnel * 0.18, 0.16, 0.62);
-        alpha = clamp(alpha + uRainStrength * 0.08, 0.16, 0.74);
-        alpha = floor(alpha * 4.0) / 4.0;
-
-        gl_FragColor = vec4(color, alpha);
-        #include <fog_fragment>
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    fog: false,
-  });
-
-  waterMesh = new THREE.Mesh(geometry, material);
-  waterMesh.rotation.x = -Math.PI * 0.5;
-  waterMesh.position.y = SEA_LEVEL + 0.36;
-  scene.add(waterMesh);
+  // Water now renders only from chunk water blocks (rivers/lakes/ponds), not a global plane.
 }
 
 function updateWaterPosition() {
