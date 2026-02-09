@@ -351,14 +351,34 @@ let zombieSpawnTimer = 0;
 let zombieKills = 0;
 let shotsFired = 0;
 let shotsHit = 0;
+let hudErrorMessage = "";
 const zombies = [];
 const activeProjectiles = [];
 const impactParticles = [];
 
 const hud = document.getElementById("hud");
+const hudStatusValue = document.getElementById("hud-status-value");
+const hudBiomeValue = document.getElementById("hud-biome");
+const hudSeedValue = document.getElementById("hud-seed");
+const hudChunkValue = document.getElementById("hud-chunk");
+const hudPositionValue = document.getElementById("hud-position");
+const hudLoadedValue = document.getElementById("hud-loaded");
+const hudQueuesValue = document.getElementById("hud-queues");
+const hudZombiesValue = document.getElementById("hud-zombies");
+const hudKillsValue = document.getElementById("hud-kills");
+const hudShotsValue = document.getElementById("hud-shots");
+const hudAccuracyValue = document.getElementById("hud-accuracy");
+const hudDistanceValue = document.getElementById("hud-distance");
+const hudTimeValue = document.getElementById("hud-time");
+const hudBlocksValue = document.getElementById("hud-blocks");
+const hudFacesValue = document.getElementById("hud-faces");
+const hudDecorValue = document.getElementById("hud-decor");
+const hudOresValue = document.getElementById("hud-ores");
 const healthUi = document.getElementById("health-ui");
 const healthFill = document.getElementById("health-fill");
 const healthValue = document.getElementById("health-value");
+const healthState = document.getElementById("health-state");
+const healthPercent = document.getElementById("health-percent");
 const damageVignette = document.getElementById("damage-vignette");
 const deathScreen = document.getElementById("death-screen");
 const deathSummary = document.getElementById("death-summary");
@@ -366,13 +386,24 @@ const deathStats = document.getElementById("death-stats");
 const deathRespawnButton = document.getElementById("death-respawn");
 const deathNewSeedButton = document.getElementById("death-new-seed");
 
+function setHudStatus(message, state = "idle") {
+  if (hudStatusValue) {
+    hudStatusValue.textContent = message;
+    hudStatusValue.dataset.state = state;
+  } else if (hud) {
+    hud.textContent = message;
+  }
+}
+
 window.addEventListener("error", (event) => {
-  hud.textContent = `Runtime error: ${event.message}`;
+  hudErrorMessage = `Runtime error: ${event.message}`;
+  setHudStatus(hudErrorMessage, "error");
 });
 
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
-  hud.textContent = `Promise error: ${reason}`;
+  hudErrorMessage = `Promise error: ${reason}`;
+  setHudStatus(hudErrorMessage, "error");
 });
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
@@ -5410,8 +5441,35 @@ function formatDuration(totalSeconds) {
   return `${secs}s`;
 }
 
+function setText(target, value) {
+  if (target) target.textContent = value;
+}
+
+function getDaylightLabel(daylight) {
+  if (daylight >= 0.84) return "Day";
+  if (daylight >= 0.62) return "Afternoon";
+  if (daylight >= 0.44) return "Dusk";
+  if (daylight >= 0.26) return "Night";
+  if (daylight >= 0.12) return "Midnight";
+  return "Pre-dawn";
+}
+
 function updateHealthUi() {
   const ratio = THREE.MathUtils.clamp(playerHealth / PLAYER_MAX_HEALTH, 0, 1);
+  const percent = Math.round(ratio * 100);
+  let stateLabel = "Stable";
+  let state = "stable";
+  if (ratio <= 0.15) {
+    stateLabel = "Critical";
+    state = "critical";
+  } else if (ratio <= 0.3) {
+    stateLabel = "Danger";
+    state = "danger";
+  } else if (ratio <= 0.55) {
+    stateLabel = "Injured";
+    state = "injured";
+  }
+
   if (healthFill) {
     healthFill.style.width = `${(ratio * 100).toFixed(1)}%`;
     const red = Math.round(220 - ratio * 90);
@@ -5422,13 +5480,19 @@ function updateHealthUi() {
   if (healthValue) {
     healthValue.textContent = `${Math.ceil(playerHealth)} / ${PLAYER_MAX_HEALTH}`;
   }
+  setText(healthState, stateLabel);
+  setText(healthPercent, `${percent}%`);
   if (healthUi) {
     healthUi.classList.toggle("critical", ratio <= 0.3);
+    healthUi.dataset.state = state;
   }
 }
 
 function hideDeathScreen() {
-  if (deathScreen) deathScreen.classList.add("hidden");
+  if (deathScreen) {
+    deathScreen.classList.add("hidden");
+    deathScreen.setAttribute("aria-hidden", "true");
+  }
 }
 
 function showDeathScreen() {
@@ -5446,7 +5510,10 @@ function showDeathScreen() {
       `<div class="death-stat"><span>Distance</span><strong>${playerDistanceTraveled.toFixed(1)}m</strong></div>` +
       `<div class="death-stat"><span>Seed</span><strong>${worldSeed}</strong></div>`;
   }
-  if (deathScreen) deathScreen.classList.remove("hidden");
+  if (deathScreen) {
+    deathScreen.classList.remove("hidden");
+    deathScreen.setAttribute("aria-hidden", "false");
+  }
 }
 
 function triggerPlayerDeath() {
@@ -5497,23 +5564,59 @@ function updatePlayerCombatState(delta) {
 }
 
 function updateHud() {
-  const lockState = playerDead ? "You are down" : controls.isLocked ? "Mouse locked" : "Click to lock mouse";
+  const lockState = playerDead ? "Eliminated" : controls.isLocked ? "Engaged" : "Click to play";
+  const statusText = hudErrorMessage || lockState;
+  const statusState = hudErrorMessage
+    ? "error"
+    : playerDead
+      ? "down"
+      : controls.isLocked
+        ? "active"
+        : "idle";
+
   const sampleX = Math.floor(camera.position.x);
   const sampleZ = Math.floor(camera.position.z);
+  const sampleY = Math.floor(camera.position.y);
   const riverIntensity = getRiverIntensity(sampleX, sampleZ);
   const biomeName = BIOME_NAMES[getBiomeAt(sampleX, sampleZ, riverIntensity)] ?? "Plains";
   const cx = worldToChunkCoord(camera.position.x, CHUNK_SIZE_X);
   const cz = worldToChunkCoord(camera.position.z, CHUNK_SIZE_Z);
   const accuracy = shotsFired > 0 ? (shotsHit / shotsFired) * 100 : 0;
+  const daylight = THREE.MathUtils.clamp((Math.sin(dayPhase) + 0.12) / 1.12, 0, 1);
+  const daylightLabel = getDaylightLabel(daylight);
 
-  hud.textContent =
-    `${lockState} | WASD move | Space jump | Shift sprint | Hold LMB fire | R new seed | T rebuild | ` +
-    `HP ${Math.ceil(playerHealth)} | Seed ${worldSeed} | Chunk ${cx},${cz} | Biome ${biomeName} | ` +
-    `Loaded ${activeChunks.size} | GenQ ${chunkLoadQueue.length} | MeshQ ${chunkMeshQueue.length} | ` +
-    `Zombies ${zombies.length} | Kills ${zombieKills} | Shots ${shotsFired} | Accuracy ${accuracy.toFixed(1)}% | ` +
-    `Decor ${totalTrees.toLocaleString()} | Ores ${totalOreBlocks.toLocaleString()} | ` +
-    `Blocks ${totalSolidBlocks.toLocaleString()} | ` +
-    `Faces ${totalVisibleFaces.toLocaleString()}`;
+  setHudStatus(statusText, statusState);
+  if (hud) hud.classList.toggle("error", Boolean(hudErrorMessage));
+
+  setText(hudBiomeValue, biomeName);
+  setText(hudSeedValue, String(worldSeed));
+  setText(hudChunkValue, `${cx}, ${cz}`);
+  setText(hudPositionValue, `${sampleX}, ${sampleY}, ${sampleZ}`);
+  setText(hudLoadedValue, `${activeChunks.size.toLocaleString()} chunks`);
+  setText(hudQueuesValue, `${chunkLoadQueue.length} gen / ${chunkMeshQueue.length} mesh`);
+  setText(hudZombiesValue, zombies.length.toLocaleString());
+  setText(hudKillsValue, zombieKills.toLocaleString());
+  setText(hudShotsValue, shotsFired.toLocaleString());
+  setText(hudAccuracyValue, `${accuracy.toFixed(1)}%`);
+  setText(hudDistanceValue, `${playerDistanceTraveled.toFixed(1)} m`);
+  setText(hudTimeValue, `${daylightLabel} ${(daylight * 100).toFixed(0)}%`);
+  setText(hudBlocksValue, totalSolidBlocks.toLocaleString());
+  setText(hudFacesValue, totalVisibleFaces.toLocaleString());
+  setText(hudDecorValue, totalTrees.toLocaleString());
+  setText(hudOresValue, totalOreBlocks.toLocaleString());
+
+  if (
+    !hudStatusValue &&
+    !hudBiomeValue &&
+    hud
+  ) {
+    hud.textContent =
+      `${statusText} | Seed ${worldSeed} | Chunk ${cx},${cz} | Biome ${biomeName} | ` +
+      `Loaded ${activeChunks.size} | GenQ ${chunkLoadQueue.length} | MeshQ ${chunkMeshQueue.length} | ` +
+      `Zombies ${zombies.length} | Kills ${zombieKills} | Shots ${shotsFired} | Accuracy ${accuracy.toFixed(1)}% | ` +
+      `Decor ${totalTrees.toLocaleString()} | Ores ${totalOreBlocks.toLocaleString()} | ` +
+      `Blocks ${totalSolidBlocks.toLocaleString()} | Faces ${totalVisibleFaces.toLocaleString()}`;
+  }
 }
 
 function regenerate(useNewSeed = true, resetToSpawn = false) {

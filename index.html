@@ -6,15 +6,22 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Voxel Terrain Demo</title>
+  <title>Cube Zombie Survival</title>
   <style>
+    @import url("https://fonts.googleapis.com/css2?family=Oxanium:wght@500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap");
+
     :root {
-      --hud-bg: rgba(10, 16, 24, 0.62);
-      --hud-border: rgba(151, 181, 214, 0.32);
-      --hud-text: #ecf4ff;
-      --hud-subtle: rgba(188, 210, 236, 0.78);
-      --health-bg: rgba(8, 14, 24, 0.72);
-      --crosshair: rgba(255, 255, 255, 0.95);
+      --text-main: #edf6ff;
+      --text-soft: rgba(195, 219, 247, 0.86);
+      --card-bg: rgba(10, 16, 26, 0.58);
+      --card-border: rgba(123, 174, 229, 0.3);
+      --card-edge: rgba(179, 224, 255, 0.22);
+      --accent: #67d2ff;
+      --accent-soft: rgba(103, 210, 255, 0.25);
+      --danger: #ff5f7d;
+      --danger-soft: rgba(255, 95, 125, 0.24);
+      --shadow: 0 16px 42px rgba(0, 0, 0, 0.38);
+      --crosshair: rgba(241, 251, 255, 0.96);
     }
 
     * {
@@ -27,11 +34,31 @@
       height: 100%;
       margin: 0;
       overflow: hidden;
-      font-family: "Segoe UI Variable", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
-      background: #9fd0ff;
+      font-family: "Space Grotesk", "Segoe UI", sans-serif;
+      color: var(--text-main);
+      background:
+        radial-gradient(circle at 20% -12%, #3b7ecf 0%, rgba(59, 126, 207, 0) 55%),
+        radial-gradient(circle at 84% -24%, #5a97d7 0%, rgba(90, 151, 215, 0) 48%),
+        linear-gradient(160deg, #0f1a2b 0%, #121f36 40%, #111a2a 100%);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.22;
+      background:
+        radial-gradient(circle at 18% 18%, rgba(178, 220, 255, 0.34), rgba(178, 220, 255, 0) 38%),
+        radial-gradient(circle at 82% 22%, rgba(112, 172, 255, 0.22), rgba(112, 172, 255, 0) 44%);
+      mix-blend-mode: screen;
     }
 
     canvas {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
       display: block;
       width: 100%;
       height: 100%;
@@ -39,135 +66,345 @@
 
     #hud {
       position: fixed;
-      top: 16px;
-      left: 16px;
-      z-index: 12;
-      color: var(--hud-text);
-      background: var(--hud-bg);
-      border: 1px solid var(--hud-border);
-      box-shadow:
-        0 10px 26px rgba(0, 0, 0, 0.34),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-      backdrop-filter: blur(8px);
-      padding: 12px 14px;
-      border-radius: 12px;
-      font-size: 12.5px;
-      line-height: 1.4;
-      letter-spacing: 0.01em;
-      user-select: none;
-      max-width: min(92vw, 860px);
-      color: var(--hud-subtle);
-    }
-
-    #crosshair {
-      position: fixed;
-      left: 50%;
-      top: 50%;
-      width: 16px;
-      height: 16px;
-      margin-left: -8px;
-      margin-top: -8px;
+      inset: 14px;
+      z-index: 14;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
       pointer-events: none;
-      z-index: 10;
+      user-select: none;
     }
 
-    #crosshair::before,
-    #crosshair::after {
+    #hud-top,
+    #hud-bottom {
+      display: grid;
+      grid-template-columns: minmax(280px, 470px) minmax(280px, 470px);
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .hud-card {
+      position: relative;
+      border-radius: 16px;
+      border: 1px solid var(--card-border);
+      background: linear-gradient(165deg, rgba(17, 26, 39, 0.86) 0%, var(--card-bg) 100%);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px) saturate(120%);
+      padding: 12px 14px;
+      overflow: hidden;
+    }
+
+    .hud-card::before {
       content: "";
       position: absolute;
-      background: var(--crosshair);
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      border: 1px solid var(--card-edge);
+      mask-image: linear-gradient(160deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.22) 40%, rgba(255, 255, 255, 0) 70%);
     }
 
-    #crosshair::before {
-      left: 7px;
-      top: 1px;
-      width: 2px;
-      height: 14px;
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
     }
 
-    #crosshair::after {
-      left: 1px;
-      top: 7px;
-      width: 14px;
-      height: 2px;
+    .panel-title {
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(220, 239, 255, 0.96);
+    }
+
+    .panel-subtitle {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(178, 205, 235, 0.74);
+    }
+
+    .status-pill {
+      border-radius: 999px;
+      border: 1px solid rgba(138, 184, 229, 0.36);
+      background: rgba(86, 149, 208, 0.22);
+      color: #dcf2ff;
+      padding: 5px 10px;
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      white-space: nowrap;
+      max-width: 100%;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .status-pill[data-state="active"] {
+      background: rgba(66, 197, 137, 0.2);
+      border-color: rgba(94, 222, 163, 0.45);
+      color: #dcfff0;
+    }
+
+    .status-pill[data-state="idle"] {
+      background: rgba(84, 141, 205, 0.18);
+      border-color: rgba(138, 184, 229, 0.36);
+      color: #d8ebff;
+    }
+
+    .status-pill[data-state="down"] {
+      background: var(--danger-soft);
+      border-color: rgba(255, 133, 155, 0.56);
+      color: #ffe3ea;
+    }
+
+    .status-pill[data-state="error"] {
+      background: rgba(255, 76, 112, 0.28);
+      border-color: rgba(255, 133, 155, 0.7);
+      color: #ffe6ed;
+    }
+
+    .stats-grid {
+      display: grid;
+      gap: 8px;
+    }
+
+    .stats-grid.cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .stats-grid.cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .stat {
+      border-radius: 11px;
+      border: 1px solid rgba(147, 187, 227, 0.2);
+      background: rgba(16, 24, 35, 0.48);
+      padding: 8px 9px;
+      min-height: 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(174, 202, 231, 0.74);
+    }
+
+    .stat-value {
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      font-size: 16px;
+      line-height: 1.05;
+      letter-spacing: 0.02em;
+      color: #f2f8ff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #controls-card {
+      align-self: end;
+    }
+
+    #control-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+    }
+
+    .control-item {
+      border-radius: 9px;
+      border: 1px solid rgba(150, 189, 228, 0.2);
+      background: rgba(11, 20, 32, 0.46);
+      padding: 6px 8px;
+      font-size: 11px;
+      color: var(--text-soft);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .control-item kbd {
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: #e6f6ff;
+      min-width: 54px;
+      text-align: center;
+      padding: 3px 7px;
+      border-radius: 7px;
+      border: 1px solid rgba(170, 206, 236, 0.32);
+      background: rgba(118, 160, 210, 0.22);
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.24);
     }
 
     #health-ui {
       position: fixed;
-      left: 16px;
-      bottom: 16px;
-      z-index: 12;
-      width: min(360px, calc(100vw - 32px));
-      background: var(--health-bg);
-      border: 1px solid rgba(154, 183, 216, 0.28);
-      border-radius: 14px;
+      left: 14px;
+      bottom: 14px;
+      z-index: 15;
+      width: min(360px, calc(100vw - 28px));
+      border-radius: 15px;
+      border: 1px solid rgba(138, 184, 229, 0.3);
+      background: linear-gradient(170deg, rgba(10, 18, 29, 0.84), rgba(12, 19, 31, 0.64));
       box-shadow:
-        0 14px 28px rgba(0, 0, 0, 0.36),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-      backdrop-filter: blur(10px);
-      padding: 12px 13px;
+        var(--shadow),
+        inset 0 0 0 1px rgba(197, 223, 248, 0.12);
+      backdrop-filter: blur(10px) saturate(120%);
+      padding: 11px 12px 10px;
       user-select: none;
+      pointer-events: none;
+      transition: border-color 130ms ease, box-shadow 130ms ease;
     }
 
     #health-header {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
+      gap: 10px;
       margin-bottom: 8px;
     }
 
     #health-label {
-      color: rgba(208, 227, 252, 0.9);
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
       font-size: 12px;
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      font-weight: 600;
+      color: rgba(206, 231, 255, 0.9);
+      font-weight: 700;
     }
 
     #health-value {
-      color: #f2f8ff;
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      font-size: 15px;
       font-weight: 700;
-      font-size: 14px;
-      letter-spacing: 0.01em;
+      letter-spacing: 0.02em;
+      color: #f3f8ff;
     }
 
     #health-track {
       width: 100%;
       height: 14px;
       border-radius: 999px;
+      border: 1px solid rgba(176, 209, 239, 0.26);
       background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.08);
       overflow: hidden;
-      box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+      box-shadow: inset 0 1px 5px rgba(0, 0, 0, 0.4);
     }
 
     #health-fill {
       width: 100%;
       height: 100%;
       border-radius: inherit;
-      background: linear-gradient(90deg, rgb(134, 188, 87), rgb(170, 219, 108));
-      transition:
-        width 140ms ease-out,
-        filter 140ms ease-out,
-        background 180ms ease-out;
-      box-shadow: 0 0 14px rgba(145, 215, 105, 0.35);
+      background: linear-gradient(90deg, #83bd57, #a3d46f);
+      transition: width 120ms ease-out, filter 120ms ease-out, background 180ms ease-out;
+      box-shadow: 0 0 14px rgba(152, 222, 104, 0.3);
     }
 
-    #health-ui.critical #health-fill {
-      filter: saturate(1.18);
+    #health-meta {
+      margin-top: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(182, 211, 241, 0.82);
+      font-weight: 700;
+    }
+
+    #health-ui[data-state="injured"] {
+      border-color: rgba(228, 168, 102, 0.5);
+    }
+
+    #health-ui[data-state="danger"],
+    #health-ui.critical {
+      border-color: rgba(255, 134, 134, 0.56);
       box-shadow:
-        0 0 12px rgba(255, 86, 86, 0.44),
-        inset 0 0 10px rgba(255, 255, 255, 0.08);
+        0 0 0 1px rgba(255, 110, 132, 0.18),
+        var(--shadow),
+        inset 0 0 0 1px rgba(255, 169, 183, 0.14);
+    }
+
+    #health-ui[data-state="critical"] {
+      border-color: rgba(255, 99, 122, 0.72);
+      box-shadow:
+        0 0 0 1px rgba(255, 83, 114, 0.28),
+        0 14px 38px rgba(58, 8, 16, 0.5),
+        inset 0 0 0 1px rgba(255, 162, 176, 0.2);
+    }
+
+    #crosshair {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 28px;
+      height: 28px;
+      margin-left: -14px;
+      margin-top: -14px;
+      pointer-events: none;
+      z-index: 13;
+      filter: drop-shadow(0 0 5px rgba(143, 222, 255, 0.38));
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      margin: auto;
+    }
+
+    #crosshair::before {
+      width: 2px;
+      height: 22px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, var(--crosshair) 25%, var(--crosshair) 75%, rgba(255, 255, 255, 0) 100%);
+    }
+
+    #crosshair::after {
+      width: 22px;
+      height: 2px;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, var(--crosshair) 25%, var(--crosshair) 75%, rgba(255, 255, 255, 0) 100%);
+    }
+
+    #crosshair span {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      margin-left: -4px;
+      margin-top: -4px;
+      border-radius: 50%;
+      border: 1px solid rgba(213, 240, 255, 0.9);
+      box-shadow: 0 0 0 1px rgba(56, 97, 131, 0.55);
+      background: rgba(210, 242, 255, 0.3);
     }
 
     #damage-vignette {
       position: fixed;
       inset: 0;
       pointer-events: none;
-      z-index: 9;
+      z-index: 12;
       opacity: 0;
       background:
-        radial-gradient(circle at 50% 42%, rgba(255, 30, 30, 0.04) 0%, rgba(255, 30, 30, 0.16) 34%, rgba(33, 2, 2, 0.72) 100%);
+        radial-gradient(circle at 50% 42%, rgba(255, 37, 37, 0.02) 0%, rgba(255, 38, 38, 0.16) 36%, rgba(20, 3, 6, 0.74) 100%);
       transition: opacity 120ms linear;
     }
 
@@ -177,10 +414,10 @@
       z-index: 20;
       display: grid;
       place-items: center;
-      padding: 24px;
+      padding: 22px;
       background:
-        radial-gradient(circle at 52% 35%, rgba(182, 56, 56, 0.24) 0%, rgba(15, 6, 8, 0.86) 62%, rgba(7, 4, 5, 0.94) 100%);
-      backdrop-filter: blur(7px);
+        radial-gradient(circle at 50% 24%, rgba(255, 102, 133, 0.22) 0%, rgba(18, 8, 16, 0.86) 52%, rgba(8, 4, 10, 0.96) 100%);
+      backdrop-filter: blur(8px);
       transition: opacity 180ms ease, visibility 180ms ease;
     }
 
@@ -191,66 +428,75 @@
     }
 
     #death-card {
-      width: min(560px, 96vw);
-      border-radius: 18px;
-      padding: 26px 24px 20px;
-      border: 1px solid rgba(255, 208, 208, 0.22);
-      background: linear-gradient(180deg, rgba(30, 20, 26, 0.9), rgba(13, 8, 13, 0.94));
+      width: min(690px, 95vw);
+      border-radius: 20px;
+      border: 1px solid rgba(255, 171, 191, 0.28);
+      background: linear-gradient(175deg, rgba(29, 16, 24, 0.88), rgba(12, 8, 14, 0.95));
       box-shadow:
-        0 28px 60px rgba(0, 0, 0, 0.52),
-        inset 0 0 0 1px rgba(255, 255, 255, 0.03);
-      color: #f3f7ff;
+        0 24px 58px rgba(0, 0, 0, 0.55),
+        inset 0 0 0 1px rgba(255, 212, 223, 0.1);
+      padding: 26px 24px 22px;
+      color: #f5f8ff;
     }
 
     #death-kicker {
       font-size: 11px;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.12em;
-      color: rgba(238, 190, 196, 0.86);
-      margin-bottom: 8px;
-      font-weight: 600;
+      letter-spacing: 0.14em;
+      color: rgba(255, 193, 206, 0.86);
+      margin-bottom: 10px;
     }
 
     #death-title {
       margin: 0;
-      font-size: clamp(34px, 5vw, 46px);
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      font-size: clamp(36px, 7vw, 54px);
       font-weight: 800;
+      line-height: 0.94;
       letter-spacing: 0.01em;
-      line-height: 0.95;
-      color: #fff5f5;
-      text-shadow: 0 6px 26px rgba(255, 74, 74, 0.2);
+      color: #fff4f7;
+      text-shadow: 0 10px 36px rgba(255, 78, 116, 0.2);
     }
 
     #death-summary {
       margin: 12px 0 18px;
-      color: rgba(220, 230, 245, 0.88);
+      color: rgba(221, 231, 248, 0.9);
       font-size: 14px;
-      line-height: 1.4;
+      line-height: 1.45;
     }
 
     #death-stats {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 10px;
       margin-bottom: 18px;
     }
 
     .death-stat {
-      border-radius: 10px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(255, 255, 255, 0.03);
+      border-radius: 11px;
+      border: 1px solid rgba(255, 201, 216, 0.18);
+      background: rgba(255, 255, 255, 0.04);
       padding: 10px 11px;
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      font-size: 13px;
-      color: rgba(214, 223, 236, 0.9);
+      flex-direction: column;
+      gap: 6px;
+      min-height: 64px;
+    }
+
+    .death-stat span {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(220, 227, 240, 0.82);
+      font-weight: 700;
     }
 
     .death-stat strong {
-      color: #fff;
-      font-size: 14px;
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      color: #ffffff;
+      font-size: 18px;
+      font-weight: 700;
       letter-spacing: 0.01em;
     }
 
@@ -262,22 +508,24 @@
 
     .death-btn {
       appearance: none;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      background: rgba(255, 255, 255, 0.08);
-      color: #e9f2ff;
-      padding: 10px 15px;
+      border: 1px solid rgba(255, 195, 210, 0.32);
       border-radius: 10px;
+      padding: 10px 15px;
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
       font-size: 13px;
-      font-weight: 600;
-      letter-spacing: 0.01em;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #f5f8ff;
+      background: rgba(255, 255, 255, 0.08);
       cursor: pointer;
-      transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+      transition: transform 110ms ease, background 120ms ease, border-color 120ms ease;
     }
 
     .death-btn:hover {
       transform: translateY(-1px);
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.28);
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 211, 223, 0.5);
     }
 
     .death-btn:active {
@@ -285,43 +533,222 @@
     }
 
     .death-btn.primary {
-      background: linear-gradient(180deg, rgba(244, 116, 116, 0.92), rgba(209, 58, 74, 0.94));
-      border-color: rgba(255, 187, 187, 0.45);
-      color: #fff8f8;
-      box-shadow: 0 10px 20px rgba(175, 30, 40, 0.34);
+      border-color: rgba(255, 190, 208, 0.62);
+      background: linear-gradient(180deg, rgba(253, 110, 142, 0.95), rgba(215, 53, 102, 0.95));
+      box-shadow: 0 10px 22px rgba(168, 25, 72, 0.35);
+      color: #fff7fa;
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 1200px) {
+      #hud-top,
+      #hud-bottom {
+        grid-template-columns: 1fr;
+      }
+
+      #controls-card {
+        align-self: stretch;
+      }
+    }
+
+    @media (max-width: 780px) {
       #hud {
-        font-size: 11.5px;
+        inset: 10px;
+        gap: 9px;
+      }
+
+      .hud-card {
+        padding: 10px 10px;
+        border-radius: 12px;
+      }
+
+      .panel-title {
+        font-size: 12px;
+      }
+
+      .stats-grid.cols-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .stats-grid.cols-2 {
+        grid-template-columns: 1fr;
+      }
+
+      #control-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #health-ui {
+        left: 10px;
+        bottom: 10px;
+        width: calc(100vw - 20px);
       }
 
       #death-card {
-        padding: 22px 18px 18px;
+        padding: 20px 16px 16px;
+      }
+
+      #death-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 520px) {
+      #hud-bottom {
+        display: none;
+      }
+
+      .status-pill {
+        max-width: 170px;
       }
 
       #death-stats {
         grid-template-columns: 1fr;
       }
+
+      #crosshair {
+        width: 24px;
+        height: 24px;
+        margin-left: -12px;
+        margin-top: -12px;
+      }
     }
   </style>
 </head>
 <body>
-  <div id="hud">Loading terrain...</div>
-  <div id="health-ui">
+  <div id="hud" aria-live="polite">
+    <div id="hud-top">
+      <section class="hud-card" id="world-card">
+        <div class="panel-head">
+          <div class="panel-title">World Scanner</div>
+          <div id="hud-status-value" class="status-pill" data-state="idle">Loading</div>
+        </div>
+        <div class="stats-grid cols-2">
+          <div class="stat">
+            <div class="stat-label">Biome</div>
+            <div class="stat-value" id="hud-biome">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">World Seed</div>
+            <div class="stat-value" id="hud-seed">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Chunk</div>
+            <div class="stat-value" id="hud-chunk">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Position</div>
+            <div class="stat-value" id="hud-position">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Loaded</div>
+            <div class="stat-value" id="hud-loaded">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Chunk Queues</div>
+            <div class="stat-value" id="hud-queues">-</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="hud-card" id="combat-card">
+        <div class="panel-head">
+          <div class="panel-title">Combat Feed</div>
+          <div class="panel-subtitle">Survival</div>
+        </div>
+        <div class="stats-grid cols-2">
+          <div class="stat">
+            <div class="stat-label">Zombies</div>
+            <div class="stat-value" id="hud-zombies">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Kills</div>
+            <div class="stat-value" id="hud-kills">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Shots Fired</div>
+            <div class="stat-value" id="hud-shots">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Accuracy</div>
+            <div class="stat-value" id="hud-accuracy">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Distance</div>
+            <div class="stat-value" id="hud-distance">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Day Cycle</div>
+            <div class="stat-value" id="hud-time">-</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="hud-bottom">
+      <section class="hud-card" id="render-card">
+        <div class="panel-head">
+          <div class="panel-title">World Metrics</div>
+          <div class="panel-subtitle">Render</div>
+        </div>
+        <div class="stats-grid cols-4">
+          <div class="stat">
+            <div class="stat-label">Blocks</div>
+            <div class="stat-value" id="hud-blocks">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Faces</div>
+            <div class="stat-value" id="hud-faces">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Decor</div>
+            <div class="stat-value" id="hud-decor">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Ores</div>
+            <div class="stat-value" id="hud-ores">-</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="hud-card" id="controls-card">
+        <div class="panel-head">
+          <div class="panel-title">Controls</div>
+          <div class="panel-subtitle">Input</div>
+        </div>
+        <div id="control-grid">
+          <div class="control-item"><kbd>WASD</kbd><span>Move</span></div>
+          <div class="control-item"><kbd>Mouse</kbd><span>Look / Aim</span></div>
+          <div class="control-item"><kbd>Shift</kbd><span>Sprint</span></div>
+          <div class="control-item"><kbd>Space</kbd><span>Jump</span></div>
+          <div class="control-item"><kbd>LMB</kbd><span>Fire</span></div>
+          <div class="control-item"><kbd>R</kbd><span>New Seed</span></div>
+          <div class="control-item"><kbd>T</kbd><span>Rebuild</span></div>
+          <div class="control-item"><kbd>Click</kbd><span>Lock Cursor</span></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="health-ui" data-state="stable">
     <div id="health-header">
-      <span id="health-label">Health</span>
+      <span id="health-label">Vitality</span>
       <span id="health-value">100 / 100</span>
     </div>
     <div id="health-track">
       <div id="health-fill"></div>
     </div>
+    <div id="health-meta">
+      <span id="health-state">Stable</span>
+      <span id="health-percent">100%</span>
+    </div>
   </div>
-  <div id="crosshair" aria-hidden="true"></div>
+
+  <div id="crosshair" aria-hidden="true"><span></span></div>
   <div id="damage-vignette" aria-hidden="true"></div>
+
   <div id="death-screen" class="hidden" aria-hidden="true">
     <section id="death-card">
-      <div id="death-kicker">Session Complete</div>
+      <div id="death-kicker">Session Report</div>
       <h1 id="death-title">You Died</h1>
       <p id="death-summary">You fought hard, but the horde got through.</p>
       <div id="death-stats"></div>
@@ -331,6 +758,7 @@
       </div>
     </section>
   </div>
+
   <script type="importmap">
     {
       "imports": {
@@ -339,6 +767,6 @@
       }
     }
   </script>
-  <script type="module" src="./main.js?v=20260209-49"></script>
+  <script type="module" src="./main.js?v=20260209-50"></script>
 </body>
 </html>
