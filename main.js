@@ -5449,6 +5449,145 @@ function isLeafLikeBlock(type) {
   );
 }
 
+function isGroundLikeBlock(type) {
+  return (
+    type === BLOCK.GRASS ||
+    type === BLOCK.DIRT ||
+    type === BLOCK.STONE ||
+    type === BLOCK.SAND ||
+    type === BLOCK.SNOW ||
+    type === BLOCK.MOSS ||
+    type === BLOCK.RED_SAND ||
+    type === BLOCK.BASALT ||
+    type === BLOCK.ASH ||
+    type === BLOCK.COAL_ORE ||
+    type === BLOCK.IRON_ORE
+  );
+}
+
+function isWoodLikeBlock(type) {
+  return (
+    type === BLOCK.WOOD ||
+    type === BLOCK.BIRCH_WOOD ||
+    type === BLOCK.JUNGLE_WOOD ||
+    type === BLOCK.ACACIA_WOOD ||
+    type === BLOCK.CHERRY_WOOD
+  );
+}
+
+function applyDetailedBlockColor(type, worldX, y, worldZ, face, colorOut) {
+  const sideFace = face.dir[1] === 0;
+  const topFace = face.dir[1] === 1;
+  const bottomFace = face.dir[1] === -1;
+  const nMacro = hash2(worldX * 0.81 + y * 0.31 + type * 1.73, worldZ * 0.81 - y * 0.27 - type * 2.11);
+  const nFine = hash2(worldX * 2.9 + y * 0.77 - type * 0.31, worldZ * 2.7 - y * 0.83 + type * 0.43);
+  const nPatch = hash2(worldX * 1.37 + type * 3.11, worldZ * 1.37 - type * 2.47);
+  let detail = 1 + (nMacro - 0.5) * 0.16 + (nFine - 0.5) * 0.09;
+  let tintR = 1;
+  let tintG = 1;
+  let tintB = 1;
+
+  if (isGroundLikeBlock(type)) {
+    if (type === BLOCK.GRASS) {
+      if (topFace) {
+        detail += (nPatch - 0.5) * 0.12;
+        tintR *= 0.96;
+        tintG *= 1.11;
+        tintB *= 0.96;
+      } else if (sideFace) {
+        detail *= 0.9;
+        tintR *= 1.02;
+        tintG *= 0.95;
+        tintB *= 0.9;
+      }
+    } else if (type === BLOCK.DIRT) {
+      const strata = Math.sin((y + nMacro * 3.7) * 2.85) * 0.06;
+      detail += strata;
+      tintR *= 1.08;
+      tintG *= 0.97;
+      tintB *= 0.9;
+    } else if (type === BLOCK.STONE || type === BLOCK.BASALT || type === BLOCK.ASH) {
+      const vein = Math.sin((worldX * 0.45 + worldZ * 0.39 + y * 0.83 + nPatch * 4.0) * 3.9) * 0.07;
+      detail += vein;
+      tintR *= type === BLOCK.ASH ? 1.03 : 0.96;
+      tintG *= type === BLOCK.ASH ? 1.03 : 0.97;
+      tintB *= type === BLOCK.ASH ? 1.06 : 1.03;
+    } else if (type === BLOCK.SAND || type === BLOCK.RED_SAND) {
+      const ripple = Math.sin((worldX * face.dir[0] + worldZ * face.dir[2] + y * 0.35) * 4.6 + nMacro * 6.2) * 0.05;
+      detail += ripple;
+      if (type === BLOCK.RED_SAND) {
+        tintR *= 1.12;
+        tintG *= 0.94;
+        tintB *= 0.88;
+      } else {
+        tintR *= 1.03;
+        tintG *= 1.01;
+        tintB *= 0.93;
+      }
+    } else if (type === BLOCK.SNOW) {
+      detail = 0.96 + (nFine - 0.5) * 0.08 + (nPatch > 0.82 ? 0.07 : 0);
+      tintR *= 1.03;
+      tintG *= 1.03;
+      tintB *= 1.08;
+    } else if (type === BLOCK.MOSS) {
+      detail += (nPatch - 0.5) * 0.12;
+      tintR *= 0.94;
+      tintG *= 1.08;
+      tintB *= 0.92;
+    }
+  } else if (isWoodLikeBlock(type)) {
+    if (topFace || bottomFace) {
+      const ring = Math.sin((Math.abs(worldX % 9) + Math.abs(worldZ % 9)) * 1.35 + nMacro * 6.28318) * 0.08;
+      detail += ring;
+      tintR *= 1.08;
+      tintG *= 0.97;
+      tintB *= 0.9;
+    } else {
+      const grain = Math.sin((y + nMacro * 2.7) * 7.1) * 0.08 + Math.sin((y * 0.63 + nFine * 4.1) * 15.2) * 0.03;
+      detail += grain;
+      tintR *= 1.05;
+      tintG *= 0.99;
+      tintB *= 0.91;
+    }
+
+    if (type === BLOCK.BIRCH_WOOD) {
+      const birchPatch = nPatch > 0.8 ? 0.74 : 1.0;
+      detail *= birchPatch;
+      tintR *= 1.04;
+      tintG *= 1.03;
+      tintB *= 0.95;
+    } else if (type === BLOCK.JUNGLE_WOOD) {
+      tintR *= 1.09;
+      tintG *= 0.95;
+      tintB *= 0.88;
+    } else if (type === BLOCK.ACACIA_WOOD) {
+      tintR *= 1.12;
+      tintG *= 0.98;
+      tintB *= 0.9;
+    } else if (type === BLOCK.CHERRY_WOOD) {
+      tintR *= 1.1;
+      tintG *= 0.98;
+      tintB *= 0.95;
+    }
+  } else if (isLeafLikeBlock(type)) {
+    const mottle = 0.86 + (nMacro - 0.5) * 0.28 + (nFine - 0.5) * 0.14;
+    detail = mottle + (topFace ? 0.06 : 0);
+    if (type === BLOCK.CHERRY_LEAVES) {
+      tintR *= 1.08;
+      tintG *= 0.94;
+      tintB *= 1.05;
+    } else {
+      tintR *= 0.95;
+      tintG *= 1.08;
+      tintB *= 0.94;
+    }
+  }
+
+  colorOut.r = THREE.MathUtils.clamp(colorOut.r * detail * tintR, 0, 1);
+  colorOut.g = THREE.MathUtils.clamp(colorOut.g * detail * tintG, 0, 1);
+  colorOut.b = THREE.MathUtils.clamp(colorOut.b * detail * tintB, 0, 1);
+}
+
 function isOccludingBlock(type) {
   return type !== BLOCK.AIR && !isFloraBlock(type) && !isWaterBlock(type);
 }
@@ -5942,6 +6081,7 @@ function rebuildChunkMesh(chunk) {
   const waterNormals = [];
   const waterColors = [];
   const floraBuffers = {};
+  const faceColorScratch = { r: 0, g: 0, b: 0 };
 
   for (const floraType of FLORA_RENDER_TYPES) {
     floraBuffers[floraType] = {
@@ -6054,15 +6194,26 @@ function rebuildChunkMesh(chunk) {
           if (isLeafLikeBlock(type)) light += 0.04;
           light *= ambientFactor;
 
-          const r = THREE.MathUtils.clamp(baseColor.r * variation * light, 0, 1);
-          const g = THREE.MathUtils.clamp(baseColor.g * variation * light, 0, 1);
-          const b = THREE.MathUtils.clamp(baseColor.b * variation * light, 0, 1);
+          faceColorScratch.r = THREE.MathUtils.clamp(baseColor.r * variation * light, 0, 1);
+          faceColorScratch.g = THREE.MathUtils.clamp(baseColor.g * variation * light, 0, 1);
+          faceColorScratch.b = THREE.MathUtils.clamp(baseColor.b * variation * light, 0, 1);
+          applyDetailedBlockColor(type, worldX, y, worldZ, face, faceColorScratch);
 
           for (const cornerIndex of TRIANGLE_ORDER) {
             const corner = face.corners[cornerIndex];
+            const cornerTone = hash3(
+              worldX + corner[0] * 0.73 + type * 0.031,
+              y + corner[1] * 0.67,
+              worldZ + corner[2] * 0.71 - type * 0.027
+            );
+            const cornerDetail = 0.94 + (cornerTone - 0.5) * 0.12;
             positions.push(lx + corner[0], y + corner[1], lz + corner[2]);
             normals.push(face.dir[0], face.dir[1], face.dir[2]);
-            colors.push(r, g, b);
+            colors.push(
+              THREE.MathUtils.clamp(faceColorScratch.r * cornerDetail, 0, 1),
+              THREE.MathUtils.clamp(faceColorScratch.g * cornerDetail, 0, 1),
+              THREE.MathUtils.clamp(faceColorScratch.b * cornerDetail, 0, 1)
+            );
           }
         }
       }
