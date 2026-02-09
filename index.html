@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Voxel Terrain Demo</title>
+  <style>
+    :root {
+      --hud-bg: rgba(10, 16, 24, 0.62);
+      --hud-border: rgba(151, 181, 214, 0.32);
+      --hud-text: #ecf4ff;
+      --hud-subtle: rgba(188, 210, 236, 0.78);
+      --health-bg: rgba(8, 14, 24, 0.72);
+      --crosshair: rgba(255, 255, 255, 0.95);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: "Segoe UI Variable", "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+      background: #9fd0ff;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 12;
+      color: var(--hud-text);
+      background: var(--hud-bg);
+      border: 1px solid var(--hud-border);
+      box-shadow:
+        0 10px 26px rgba(0, 0, 0, 0.34),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(8px);
+      padding: 12px 14px;
+      border-radius: 12px;
+      font-size: 12.5px;
+      line-height: 1.4;
+      letter-spacing: 0.01em;
+      user-select: none;
+      max-width: min(92vw, 860px);
+      color: var(--hud-subtle);
+    }
+
+    #crosshair {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 16px;
+      height: 16px;
+      margin-left: -8px;
+    
