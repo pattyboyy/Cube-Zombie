@@ -292,6 +292,9 @@ const IMPACT_PARTICLE_POOL_SIZE = 260;
 const IMPACT_PARTICLE_GRAVITY = 22;
 const IMPACT_PARTICLES_HIT = 16;
 const IMPACT_PARTICLES_WORLD = 11;
+const BLOOD_PARTICLES_HIT = 22;
+const BLOOD_PARTICLES_KILL = 42;
+const BLOOD_DECAL_POOL_SIZE = 120;
 const ZOMBIE_MAX_COUNT = 56;
 const ZOMBIE_HEALTH = 100;
 const ZOMBIE_SPEED_MIN = 1.1;
@@ -466,6 +469,7 @@ weatherState.windTargetAngle = weatherState.windAngle;
 const zombies = [];
 const activeProjectiles = [];
 const impactParticles = [];
+const bloodDecals = [];
 
 const hud = document.getElementById("hud");
 const hudStatusValue = document.getElementById("hud-status-value");
@@ -823,6 +827,48 @@ function createMuzzleFlashTexture() {
   return texture;
 }
 
+function createBloodSplatTexture() {
+  const size = 96;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, size, size);
+
+  const core = ctx.createRadialGradient(size * 0.5, size * 0.5, size * 0.06, size * 0.5, size * 0.5, size * 0.48);
+  core.addColorStop(0, "rgba(120,8,10,0.95)");
+  core.addColorStop(0.5, "rgba(98,6,8,0.82)");
+  core.addColorStop(1, "rgba(70,4,6,0)");
+  ctx.fillStyle = core;
+  ctx.fillRect(0, 0, size, size);
+
+  const blotches = 14;
+  for (let i = 0; i < blotches; i += 1) {
+    const angle = (i / blotches) * Math.PI * 2 + (Math.random() - 0.5) * 0.32;
+    const radius = size * (0.14 + Math.random() * 0.34);
+    const x = size * 0.5 + Math.cos(angle) * radius;
+    const y = size * 0.5 + Math.sin(angle) * radius;
+    const r = size * (0.05 + Math.random() * 0.12);
+    const blot = ctx.createRadialGradient(x, y, r * 0.08, x, y, r);
+    blot.addColorStop(0, "rgba(132,10,12,0.9)");
+    blot.addColorStop(0.7, "rgba(96,6,8,0.6)");
+    blot.addColorStop(1, "rgba(74,4,6,0)");
+    ctx.fillStyle = blot;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipMapLinearFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function createCloudTexture(variant = 0) {
   const size = 192;
   const canvas = document.createElement("canvas");
@@ -1101,6 +1147,11 @@ function clearCombatEffects() {
     particle.active = false;
     particle.mesh.visible = false;
   }
+
+  for (const decal of bloodDecals) {
+    decal.active = false;
+    decal.mesh.visible = false;
+  }
 }
 
 function createCombatEffects() {
@@ -1110,8 +1161,12 @@ function createCombatEffects() {
       if (!(node instanceof THREE.Mesh)) return;
       node.geometry.dispose();
       if (Array.isArray(node.material)) {
-        for (const material of node.material) material.dispose();
+        for (const material of node.material) {
+          material.map?.dispose?.();
+          material.dispose();
+        }
       } else {
+        node.material.map?.dispose?.();
         node.material.dispose();
       }
     });
@@ -1123,6 +1178,7 @@ function createCombatEffects() {
 
   activeProjectiles.length = 0;
   impactParticles.length = 0;
+  bloodDecals.length = 0;
 
   const projectileGeometry = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
   const projectileMaterial = new THREE.MeshBasicMaterial({
@@ -1172,6 +1228,12 @@ function createCombatEffects() {
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
+  const impactBloodMaterial = new THREE.MeshBasicMaterial({
+    color: 0x7a0608,
+    transparent: true,
+    opacity: 0.96,
+    depthWrite: false,
+  });
 
   for (let i = 0; i < IMPACT_PARTICLE_POOL_SIZE; i += 1) {
     const mesh = new THREE.Mesh(impactGeometry, impactWorldMaterial);
@@ -1194,6 +1256,36 @@ function createCombatEffects() {
       spinZ: 0,
       worldMaterial: impactWorldMaterial,
       hitMaterial: impactHitMaterial,
+      bloodMaterial: impactBloodMaterial,
+    });
+  }
+
+  const bloodTexture = createBloodSplatTexture();
+  const bloodDecalGeometry = new THREE.PlaneGeometry(1, 1);
+  for (let i = 0; i < BLOOD_DECAL_POOL_SIZE; i += 1) {
+    const decalMaterial = new THREE.MeshBasicMaterial({
+      map: bloodTexture,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9,
+      alphaTest: 0.2,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(bloodDecalGeometry, decalMaterial);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 9;
+    combatEffectsGroup.add(mesh);
+
+    bloodDecals.push({
+      mesh,
+      material: decalMaterial,
+      active: false,
+      life: 0,
+      maxLife: 0,
+      fadeStart: 0,
+      baseScale: 1,
     });
   }
 
@@ -1210,6 +1302,13 @@ function getFreeProjectile() {
 function getFreeImpactParticle() {
   for (let i = 0; i < impactParticles.length; i += 1) {
     if (!impactParticles[i].active) return impactParticles[i];
+  }
+  return null;
+}
+
+function getFreeBloodDecal() {
+  for (let i = 0; i < bloodDecals.length; i += 1) {
+    if (!bloodDecals[i].active) return bloodDecals[i];
   }
   return null;
 }
@@ -1251,6 +1350,74 @@ function spawnImpactBurst(position, normal, count, isEntityHit) {
     particle.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
     particle.mesh.scale.setScalar(particle.baseScale);
     particle.mesh.visible = true;
+  }
+}
+
+function spawnBloodBurst(position, normal, count) {
+  for (let i = 0; i < count; i += 1) {
+    const particle = getFreeImpactParticle();
+    if (!particle) break;
+
+    impactVelocityScratch.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1);
+    if (impactVelocityScratch.lengthSq() < 1e-5) {
+      impactVelocityScratch.set(0, 1, 0);
+    } else {
+      impactVelocityScratch.normalize();
+    }
+
+    if (impactVelocityScratch.dot(normal) < 0) impactVelocityScratch.multiplyScalar(-1);
+    const spreadSpeed = 2.8 + Math.random() * 5.4;
+    impactVelocityScratch.multiplyScalar(spreadSpeed);
+    impactVelocityScratch.addScaledVector(normal, 1.9);
+    impactVelocityScratch.y += 0.8 + Math.random() * 1.2;
+
+    particle.active = true;
+    particle.life = 0;
+    particle.maxLife = 0.34 + Math.random() * 0.72;
+    particle.gravity = IMPACT_PARTICLE_GRAVITY * 1.15;
+    particle.drag = 2.9;
+    particle.baseScale = 0.025 + Math.random() * 0.055;
+    particle.velocity.copy(impactVelocityScratch);
+    particle.spinX = (Math.random() * 2 - 1) * 8;
+    particle.spinY = (Math.random() * 2 - 1) * 8;
+    particle.spinZ = (Math.random() * 2 - 1) * 8;
+
+    particle.mesh.material = particle.bloodMaterial;
+    impactOffsetScratch.copy(normal).multiplyScalar(0.03 + Math.random() * 0.09);
+    particle.mesh.position.copy(position).add(impactOffsetScratch);
+    particle.mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    particle.mesh.scale.setScalar(particle.baseScale);
+    particle.mesh.visible = true;
+  }
+}
+
+function spawnBloodDecalCluster(position, count, intensity = 1) {
+  for (let i = 0; i < count; i += 1) {
+    const decal = getFreeBloodDecal();
+    if (!decal) break;
+
+    const offsetX = (Math.random() * 2 - 1) * 0.7;
+    const offsetZ = (Math.random() * 2 - 1) * 0.7;
+    const x = position.x + offsetX;
+    const z = position.z + offsetZ;
+    const groundTop = sampleGroundTopY(x, z, Math.floor(position.y + 3), true);
+    if (groundTop < 0) continue;
+
+    const groundY = groundTop + 1.015;
+    if (Math.abs(position.y - groundY) > 4.8) continue;
+
+    decal.active = true;
+    decal.life = 0;
+    decal.maxLife = 11 + Math.random() * 22;
+    decal.fadeStart = decal.maxLife * (0.72 + Math.random() * 0.16);
+    decal.baseScale = (0.42 + Math.random() * 0.92) * intensity;
+
+    decal.mesh.position.set(x, groundY + Math.random() * 0.008, z);
+    decal.mesh.rotation.set(-Math.PI * 0.5, 0, Math.random() * Math.PI * 2);
+    decal.mesh.scale.setScalar(decal.baseScale);
+    decal.material.color.setRGB(0.44 + Math.random() * 0.22, 0.02 + Math.random() * 0.04, 0.02 + Math.random() * 0.04);
+    decal.material.opacity = 0.86;
+    decal.mesh.visible = true;
   }
 }
 
@@ -6774,9 +6941,11 @@ function resolveProjectileImpact(projectile) {
   if (projectile.hitType === 1) {
     const zombie = projectile.targetZombie;
     if (zombie && !zombie.removed && !zombie.isDying) {
-      applyDamageToZombie(zombie, projectile.damage, projectile.hitPoint, projectile.direction);
+      const killed = applyDamageToZombie(zombie, projectile.damage, projectile.hitPoint, projectile.direction);
       impactNormalScratch.copy(projectile.direction).multiplyScalar(-1);
       spawnImpactBurst(projectile.hitPoint, impactNormalScratch, IMPACT_PARTICLES_HIT, true);
+      spawnBloodBurst(projectile.hitPoint, impactNormalScratch, killed ? BLOOD_PARTICLES_KILL : BLOOD_PARTICLES_HIT);
+      spawnBloodDecalCluster(projectile.hitPoint, killed ? 4 : 2, killed ? 1.3 : 0.9);
     }
     return;
   }
@@ -7488,6 +7657,22 @@ function updateImpactParticles(delta) {
     const lifeT = 1 - particle.life / particle.maxLife;
     const scale = particle.baseScale * (0.28 + lifeT * 0.95);
     particle.mesh.scale.setScalar(scale);
+  }
+
+  for (const decal of bloodDecals) {
+    if (!decal.active) continue;
+
+    decal.life += delta;
+    if (decal.life >= decal.maxLife) {
+      decal.active = false;
+      decal.mesh.visible = false;
+      continue;
+    }
+
+    if (decal.life > decal.fadeStart) {
+      const fadeT = 1 - (decal.life - decal.fadeStart) / Math.max(0.001, decal.maxLife - decal.fadeStart);
+      decal.material.opacity = THREE.MathUtils.clamp(fadeT * 0.86, 0, 0.86);
+    }
   }
 }
 
