@@ -8163,7 +8163,10 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-window.addEventListener("keydown", (event) => {
+document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented) return;
+  const isGodToggleKey = event.code === "KeyG" || event.key === "g" || event.key === "G";
+
   if (event.code === "KeyU") {
     setUiVisibility(!uiVisible);
     event.preventDefault();
@@ -8180,7 +8183,7 @@ window.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (event.code === "KeyG") {
+  if (isGodToggleKey) {
     if (event.repeat) return;
     godModeEnabled = !godModeEnabled;
     if (godModeEnabled && !controls.isLocked && !playerDead) {
@@ -8205,7 +8208,7 @@ window.addEventListener("keydown", (event) => {
   if (event.code === "Space") event.preventDefault();
 });
 
-window.addEventListener("keyup", (event) => {
+document.addEventListener("keyup", (event) => {
   pressedKeys.delete(event.code);
 });
 
