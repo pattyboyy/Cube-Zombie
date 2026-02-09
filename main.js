@@ -30,17 +30,6 @@ const FOG_NEAR_DISTANCE = Math.max(
 const MIN_TERRAIN_HEIGHT = 4;
 const MAX_TERRAIN_HEIGHT = 44;
 const SEA_LEVEL = 12;
-const RIVER_WATER_MIN_INTENSITY = 0.34;
-const RIVER_WATER_FILL_INTENSITY = 0.4;
-const RIVER_WATER_MAX_DEPTH = 7;
-const LAKE_WATER_MAX_DEPTH = 9;
-const POND_WATER_MAX_DEPTH = 4;
-const LAKE_BASIN_CELL_SIZE = 96;
-const LAKE_BASIN_MIN_RADIUS = 18;
-const LAKE_BASIN_MAX_RADIUS = 54;
-const LAKE_BASIN_PRESENCE_THRESHOLD = 0.66;
-const SPAWN_WATER_RADIUS = 320;
-const SPAWN_RIVER_HALF_WIDTH = 24;
 
 const PLAYER_WALK_SPEED = 7.2;
 const PLAYER_SPRINT_MULTIPLIER = 1.55;
@@ -605,7 +594,6 @@ const zombieMoveScratch = new THREE.Vector3();
 const biomeBlendScratch = createBiomeBlendState();
 const terrainBiomeBlendScratch = createBiomeBlendState();
 const weatherBiomeBlendScratch = createBiomeBlendState();
-const lakeBasinScratch = { strength: 0, surfaceY: -1, radius: 0 };
 const terrainMaterial = new THREE.MeshStandardMaterial({
   vertexColors: true,
   flatShading: true,
@@ -2850,147 +2838,8 @@ function getBiomeAt(worldX, worldZ, riverIntensity = 0) {
   return getBiomeBlendAt(worldX, worldZ, riverIntensity, biomeBlendScratch).dominantBiome;
 }
 
-function getSpawnRiverMask(worldX, worldZ) {
-  const spawnDistance = Math.hypot(worldX, worldZ);
-  return 1 - THREE.MathUtils.smoothstep(spawnDistance, SPAWN_WATER_RADIUS * 0.1, SPAWN_WATER_RADIUS);
-}
-
-function getLakeBasinData(worldX, worldZ, out = lakeBasinScratch) {
-  const cellX = Math.floor(worldX / LAKE_BASIN_CELL_SIZE);
-  const cellZ = Math.floor(worldZ / LAKE_BASIN_CELL_SIZE);
-  let bestStrength = 0;
-  let bestSurfaceY = -1;
-  let bestRadius = 0;
-
-  for (let dz = -1; dz <= 1; dz += 1) {
-    for (let dx = -1; dx <= 1; dx += 1) {
-      const cx = cellX + dx;
-      const cz = cellZ + dz;
-      const presence = hash2(cx * 17.173 + 91.7, cz * 29.331 - 47.2);
-      if (presence < LAKE_BASIN_PRESENCE_THRESHOLD) continue;
-
-      const centerOffsetX = hash2(cx * 11.93 - 280.4, cz * 23.77 + 41.2);
-      const centerOffsetZ = hash2(cx * 19.57 + 113.9, cz * 13.41 - 72.6);
-      const centerX = (cx + 0.18 + centerOffsetX * 0.64) * LAKE_BASIN_CELL_SIZE;
-      const centerZ = (cz + 0.18 + centerOffsetZ * 0.64) * LAKE_BASIN_CELL_SIZE;
-      const radiusNoise = hash2(cx * 7.11 + 301.5, cz * 31.37 - 99.4);
-      const radius = lerp(LAKE_BASIN_MIN_RADIUS, LAKE_BASIN_MAX_RADIUS, radiusNoise);
-      const dxWorld = worldX - centerX;
-      const dzWorld = worldZ - centerZ;
-      const distSq = dxWorld * dxWorld + dzWorld * dzWorld;
-      if (distSq >= radius * radius) continue;
-
-      const normalizedDistance = Math.sqrt(distSq) / radius;
-      const edge = 1 - normalizedDistance;
-      const profile = edge * edge * (3 - 2 * edge);
-      const strength = profile * (0.72 + (presence - LAKE_BASIN_PRESENCE_THRESHOLD) * 1.2);
-      if (strength <= bestStrength) continue;
-
-      const surfaceNoise = hash2(cx * 37.41 - 15.1, cz * 9.71 + 63.8);
-      const surfaceY = SEA_LEVEL + 1 + Math.floor(surfaceNoise * 6);
-      bestStrength = strength;
-      bestSurfaceY = surfaceY;
-      bestRadius = radius;
-    }
-  }
-
-  out.strength = bestStrength;
-  out.surfaceY = bestSurfaceY;
-  out.radius = bestRadius;
-  return out;
-}
-
 function getRiverIntensity(worldX, worldZ) {
-  const warpX = fbm2D((worldX + 330) * 0.0029, (worldZ - 210) * 0.0029, 2) * 28;
-  const warpZ = fbm2D((worldX - 470) * 0.0029, (worldZ + 110) * 0.0029, 2) * 28;
-  const x = worldX + warpX;
-  const z = worldZ + warpZ;
-  const trunk = Math.abs(fbm2D((x + 140) * 0.0062, (z - 90) * 0.0062, 4));
-  const branch = Math.abs(fbm2D((x - 420) * 0.012, (z + 310) * 0.012, 3));
-  const meander = Math.abs(fbm2D((x + 780) * 0.0032, (z - 650) * 0.0032, 2));
-  const tributary = Math.abs(fbm2D((x - 90) * 0.0098, (z + 560) * 0.0098, 3));
-  const channelDistance = trunk * 0.46 + branch * 0.24 + meander * 0.14 + tributary * 0.16;
-  const naturalRiver = THREE.MathUtils.smoothstep(THREE.MathUtils.clamp((0.34 - channelDistance) / 0.34, 0, 1), 0, 1);
-
-  // Guarantee visible rivers near spawn so players consistently encounter water early.
-  const spawnMask = getSpawnRiverMask(worldX, worldZ);
-  if (spawnMask <= 0) return naturalRiver;
-
-  const trunkOffset = fbm2D((worldX + 120) * 0.011, (worldZ - 280) * 0.011, 2) * 6.5;
-  const branchOffset = fbm2D((worldX - 260) * 0.012, (worldZ + 140) * 0.012, 2) * 5.5;
-  const diagonalOffset = fbm2D((worldX + 470) * 0.0104, (worldZ - 320) * 0.0104, 2) * 8.2;
-  const trunkDistance = Math.abs(worldX + trunkOffset);
-  const branchDistance = Math.abs(worldZ + branchOffset);
-  const diagonalDistance = Math.abs(worldX - worldZ + diagonalOffset);
-  const trunkWidth = SPAWN_RIVER_HALF_WIDTH;
-  const branchWidth = SPAWN_RIVER_HALF_WIDTH * 0.82;
-  const diagonalWidth = SPAWN_RIVER_HALF_WIDTH * 0.72;
-  const trunkChannel = THREE.MathUtils.clamp((trunkWidth - trunkDistance) / trunkWidth, 0, 1);
-  const branchChannel = THREE.MathUtils.clamp((branchWidth - branchDistance) / branchWidth, 0, 1) * 0.9;
-  const diagonalChannel = THREE.MathUtils.clamp((diagonalWidth - diagonalDistance) / diagonalWidth, 0, 1) * 0.75;
-  const spawnNetwork = Math.max(trunkChannel, branchChannel, diagonalChannel) * spawnMask;
-
-  return Math.max(naturalRiver, THREE.MathUtils.smoothstep(spawnNetwork, 0, 1));
-}
-
-function getRiverWaterSurfaceY(worldX, worldZ, terrainHeight, biome, riverIntensity) {
-  let waterSurfaceY = -1;
-  const lakeBasin = getLakeBasinData(worldX, worldZ, lakeBasinScratch);
-  const riverStrength = THREE.MathUtils.clamp(
-    (riverIntensity - RIVER_WATER_MIN_INTENSITY) / (1 - RIVER_WATER_MIN_INTENSITY),
-    0,
-    1
-  );
-
-  if (riverIntensity > RIVER_WATER_MIN_INTENSITY && terrainHeight <= SEA_LEVEL + 42) {
-    const localOffset = Math.round(
-      fbm2D((worldX + 170) * 0.0082, (worldZ - 260) * 0.0082, 2)
-    );
-    const seaStreamSurfaceY = SEA_LEVEL + 1 + THREE.MathUtils.clamp(localOffset, -1, 1);
-    const uplandStreamSurfaceY = terrainHeight + 3 + Math.floor(riverStrength * 3.4);
-    const streamSurfaceY = Math.max(seaStreamSurfaceY, uplandStreamSurfaceY);
-    waterSurfaceY = Math.max(waterSurfaceY, streamSurfaceY);
-  }
-
-  if (biome === BIOME.SWAMP && terrainHeight <= SEA_LEVEL + 3) {
-    const swampSurfaceY = SEA_LEVEL + (riverIntensity > 0.62 ? 2 : 1);
-    waterSurfaceY = Math.max(waterSurfaceY, swampSurfaceY);
-  }
-
-  if (biome === BIOME.OASIS && terrainHeight <= SEA_LEVEL + 5) {
-    const oasisSurfaceY = SEA_LEVEL + (riverIntensity > 0.58 ? 2 : 1);
-    waterSurfaceY = Math.max(waterSurfaceY, oasisSurfaceY);
-  }
-
-  if (biome === BIOME.MANGROVE && terrainHeight <= SEA_LEVEL + 4) {
-    const mangroveSurfaceY = SEA_LEVEL + (riverIntensity > 0.52 ? 2 : 1);
-    waterSurfaceY = Math.max(waterSurfaceY, mangroveSurfaceY);
-  }
-
-  if (
-    waterSurfaceY < 0 &&
-    lakeBasin.strength > 0.16 &&
-    terrainHeight <= SEA_LEVEL + 28 &&
-    terrainHeight <= lakeBasin.surfaceY - 1
-  ) {
-    waterSurfaceY = Math.max(waterSurfaceY, lakeBasin.surfaceY);
-  }
-
-  if (waterSurfaceY < 0 && biome === BIOME.OASIS && terrainHeight <= SEA_LEVEL + 5) {
-    const oasisLakeMask = fbm2D((worldX - 540) * 0.0026, (worldZ + 680) * 0.0026, 3) * 0.5 + 0.5;
-    if (oasisLakeMask > 0.78) {
-      waterSurfaceY = SEA_LEVEL + 1;
-    }
-  }
-
-  if (waterSurfaceY < 0 && biome === BIOME.MANGROVE && terrainHeight <= SEA_LEVEL + 4) {
-    const mangroveLakeMask = fbm2D((worldX + 640) * 0.0024, (worldZ - 520) * 0.0024, 3) * 0.5 + 0.5;
-    if (mangroveLakeMask > 0.72) {
-      waterSurfaceY = SEA_LEVEL + 1;
-    }
-  }
-
-  return THREE.MathUtils.clamp(waterSurfaceY, -1, WORLD_HEIGHT - 2);
+  return 0;
 }
 
 function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend = null) {
@@ -3214,12 +3063,6 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
   const spireBonus = Math.floor(spireMask * spireScale);
 
   let terrainHeight = Math.floor(lerp(biomeMin, biomeMax, shaped) + spireBonus - riverDepth);
-  const lakeBasin = getLakeBasinData(worldX, worldZ, lakeBasinScratch);
-  const lowlandMask = 1 - THREE.MathUtils.smoothstep(terrainHeight, SEA_LEVEL + 18, SEA_LEVEL + 36);
-  if (lakeBasin.strength > 0.16) {
-    const basinCarveDepth = (lakeBasin.strength - 0.16) * 32 + 3;
-    terrainHeight -= Math.floor(basinCarveDepth * lowlandMask);
-  }
 
   if (biome === BIOME.SWAMP || swampW > 0.56) {
     terrainHeight = THREE.MathUtils.clamp(terrainHeight, SEA_LEVEL - 1, SEA_LEVEL + 7);
@@ -4625,126 +4468,7 @@ function generateChunkData(cx, cz) {
   }
 
   applyCliffFacesToChunk(data, columnHeights, columnBiomes, cx, cz);
-
-  for (let lx = 0; lx < CHUNK_SIZE_X; lx += 1) {
-    for (let lz = 0; lz < CHUNK_SIZE_Z; lz += 1) {
-      const columnIdx = chunkColumnIndex(lx, lz);
-      const terrainHeight = columnHeights[columnIdx];
-      const biome = columnBiomes[columnIdx];
-      const riverIntensity = columnRivers[columnIdx];
-      const worldX = cx * CHUNK_SIZE_X + lx;
-      const worldZ = cz * CHUNK_SIZE_Z + lz;
-      const leftHeight = getClampedColumnHeight(columnHeights, lx - 1, lz);
-      const rightHeight = getClampedColumnHeight(columnHeights, lx + 1, lz);
-      const backHeight = getClampedColumnHeight(columnHeights, lx, lz - 1);
-      const frontHeight = getClampedColumnHeight(columnHeights, lx, lz + 1);
-      const backLeftHeight = getClampedColumnHeight(columnHeights, lx - 1, lz - 1);
-      const backRightHeight = getClampedColumnHeight(columnHeights, lx + 1, lz - 1);
-      const frontLeftHeight = getClampedColumnHeight(columnHeights, lx - 1, lz + 1);
-      const frontRightHeight = getClampedColumnHeight(columnHeights, lx + 1, lz + 1);
-      const neighborMinHeight = Math.min(
-        leftHeight,
-        rightHeight,
-        backHeight,
-        frontHeight,
-        backLeftHeight,
-        backRightHeight,
-        frontLeftHeight,
-        frontRightHeight
-      );
-      const neighborAvgHeight = (leftHeight + rightHeight + backHeight + frontHeight) * 0.25;
-      const channelDepth = neighborAvgHeight - terrainHeight;
-      const spawnRiverMask = getSpawnRiverMask(worldX, worldZ);
-      const lakeBasin = getLakeBasinData(worldX, worldZ, lakeBasinScratch);
-      const riverNeighborCount =
-        (getClampedColumnRiver(columnRivers, lx - 1, lz) > RIVER_WATER_MIN_INTENSITY ? 1 : 0) +
-        (getClampedColumnRiver(columnRivers, lx + 1, lz) > RIVER_WATER_MIN_INTENSITY ? 1 : 0) +
-        (getClampedColumnRiver(columnRivers, lx, lz - 1) > RIVER_WATER_MIN_INTENSITY ? 1 : 0) +
-        (getClampedColumnRiver(columnRivers, lx, lz + 1) > RIVER_WATER_MIN_INTENSITY ? 1 : 0);
-      const riverStrength = THREE.MathUtils.clamp(
-        (riverIntensity - RIVER_WATER_FILL_INTENSITY) / (1 - RIVER_WATER_FILL_INTENSITY),
-        0,
-        1
-      );
-      const hasRiverChannel = riverIntensity > RIVER_WATER_FILL_INTENSITY;
-      const nearSpawnRiver = hasRiverChannel && spawnRiverMask > 0.45 && riverStrength > 0.55;
-      const isLakeBasin = lakeBasin.strength > 0.16 && terrainHeight <= lakeBasin.surfaceY - 1;
-      const hasStandingWaterFeature = isLakeBasin;
-      if (hasRiverChannel && channelDepth < -0.08) continue;
-      if (biome === BIOME.OASIS && hasRiverChannel) {
-        const depthRequirement = THREE.MathUtils.lerp(0.6, 0.15, riverStrength);
-        const minNeighbors = riverStrength > 0.72 ? 0 : 1;
-        if (!nearSpawnRiver && (channelDepth < depthRequirement || riverNeighborCount < minNeighbors)) continue;
-      } else if (biome === BIOME.MANGROVE && hasRiverChannel) {
-        const depthRequirement = THREE.MathUtils.lerp(0.52, 0.12, riverStrength);
-        const minNeighbors = riverStrength > 0.72 ? 0 : 1;
-        if (!nearSpawnRiver && (channelDepth < depthRequirement || riverNeighborCount < minNeighbors)) continue;
-      } else if (biome !== BIOME.SWAMP && hasRiverChannel) {
-        if (!nearSpawnRiver && riverStrength < 0.78) {
-          const depthRequirement = THREE.MathUtils.lerp(0.62, 0.12, riverStrength);
-          const minNeighbors = riverStrength > 0.7 ? 0 : 1;
-          if (channelDepth < depthRequirement || riverNeighborCount < minNeighbors) continue;
-        }
-      } else if (
-        !hasStandingWaterFeature ||
-        terrainHeight > SEA_LEVEL + 28 ||
-        channelDepth < -0.5
-      ) {
-        // Lakes/ponds only fill in local basins.
-        continue;
-      }
-
-      const waterSurfaceY = getRiverWaterSurfaceY(
-        worldX,
-        worldZ,
-        terrainHeight,
-        biome,
-        riverIntensity
-      );
-      if (waterSurfaceY <= terrainHeight + 1) continue;
-
-      // Gravity-safe cap: water cannot exceed lowest immediate spill edge.
-      let spillSurfaceY = neighborMinHeight + 1;
-      if (hasRiverChannel) {
-        spillSurfaceY = Math.min(Math.floor(neighborAvgHeight + 1), neighborMinHeight + 2);
-      } else if (hasStandingWaterFeature) {
-        spillSurfaceY = Math.min(lakeBasin.surfaceY, neighborMinHeight + 6);
-      }
-      const effectiveSurfaceY = Math.min(waterSurfaceY, spillSurfaceY);
-      if (effectiveSurfaceY <= terrainHeight + 1) continue;
-
-      const startY = Math.max(terrainHeight + 1, 0);
-      const rimDepthCap = Math.max(1, neighborMinHeight - terrainHeight + 1);
-      const requestedDepth = Math.max(1, effectiveSurfaceY - terrainHeight - 1);
-      let maxBiomeDepth =
-        biome === BIOME.SWAMP ? 3 : biome === BIOME.OASIS || biome === BIOME.MANGROVE ? 4 : RIVER_WATER_MAX_DEPTH;
-      if (!hasRiverChannel) {
-        maxBiomeDepth = Math.max(maxBiomeDepth, POND_WATER_MAX_DEPTH + 2);
-        if (isLakeBasin) {
-          maxBiomeDepth = Math.max(maxBiomeDepth, LAKE_WATER_MAX_DEPTH + 3);
-        }
-      }
-      const featureDepthBonus = isLakeBasin ? 3 : hasStandingWaterFeature ? 1 : 0;
-      let depthCap = 1;
-      if (hasRiverChannel) {
-        depthCap = Math.min(
-          maxBiomeDepth,
-          rimDepthCap + featureDepthBonus + Math.floor(riverStrength * 2.2) + Math.max(0, requestedDepth - 1)
-        );
-      } else {
-        depthCap = Math.min(maxBiomeDepth, Math.max(3, requestedDepth + featureDepthBonus));
-      }
-      const endY = Math.min(
-        effectiveSurfaceY - 1,
-        terrainHeight + depthCap,
-        WORLD_HEIGHT - 2
-      );
-      for (let y = startY; y <= endY; y += 1) {
-        if (getLocalBlock(data, lx, y, lz) !== BLOCK.AIR) continue;
-        setLocalBlock(data, lx, y, lz, BLOCK.WATER);
-      }
-    }
-  }
+  // Water generation removed.
 
   for (let lx = 0; lx < CHUNK_SIZE_X; lx += 1) {
     for (let lz = 0; lz < CHUNK_SIZE_Z; lz += 1) {
@@ -5580,7 +5304,7 @@ function isFloraBlock(type) {
 }
 
 function isWaterBlock(type) {
-  return type === BLOCK.WATER;
+  return false;
 }
 
 function isLeafLikeBlock(type) {
