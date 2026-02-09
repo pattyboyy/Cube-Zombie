@@ -352,6 +352,7 @@ let zombieKills = 0;
 let shotsFired = 0;
 let shotsHit = 0;
 let hudErrorMessage = "";
+let uiVisible = false;
 const zombies = [];
 const activeProjectiles = [];
 const impactParticles = [];
@@ -385,6 +386,19 @@ const deathSummary = document.getElementById("death-summary");
 const deathStats = document.getElementById("death-stats");
 const deathRespawnButton = document.getElementById("death-respawn");
 const deathNewSeedButton = document.getElementById("death-new-seed");
+const uiToggleHint = document.getElementById("ui-toggle-hint");
+
+function setUiVisibility(visible) {
+  uiVisible = Boolean(visible);
+  const hidden = !uiVisible;
+  document.body.classList.toggle("ui-hidden", hidden);
+  if (hud) hud.setAttribute("aria-hidden", hidden ? "true" : "false");
+  if (healthUi) healthUi.setAttribute("aria-hidden", hidden ? "true" : "false");
+  if (uiToggleHint) {
+    uiToggleHint.dataset.open = uiVisible ? "true" : "false";
+    uiToggleHint.textContent = uiVisible ? "HUD ON  -  U to hide" : "HUD OFF  -  U to show";
+  }
+}
 
 function setHudStatus(message, state = "idle") {
   if (hudStatusValue) {
@@ -6951,6 +6965,12 @@ window.addEventListener("resize", () => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.code === "KeyU") {
+    setUiVisibility(!uiVisible);
+    event.preventDefault();
+    return;
+  }
+
   if (event.code === "KeyR") {
     regenerate(true);
     return;
@@ -7014,6 +7034,13 @@ controls.addEventListener("unlock", () => {
   updateHud();
 });
 
+if (uiToggleHint) {
+  uiToggleHint.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setUiVisibility(!uiVisible);
+  });
+}
+
 if (deathRespawnButton) {
   deathRespawnButton.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -7033,4 +7060,5 @@ setupAtmosphere();
 buildWater();
 regenerate(false);
 updateHud();
+setUiVisibility(false);
 renderer.setAnimationLoop(animate);

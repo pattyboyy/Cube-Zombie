@@ -74,6 +74,7 @@
       gap: 12px;
       pointer-events: none;
       user-select: none;
+      transition: opacity 170ms ease, transform 170ms ease, visibility 170ms ease;
     }
 
     #hud-top,
@@ -269,7 +270,12 @@
       padding: 11px 12px 10px;
       user-select: none;
       pointer-events: none;
-      transition: border-color 130ms ease, box-shadow 130ms ease;
+      transition:
+        opacity 170ms ease,
+        transform 170ms ease,
+        visibility 170ms ease,
+        border-color 130ms ease,
+        box-shadow 130ms ease;
     }
 
     #health-header {
@@ -348,6 +354,51 @@
         0 0 0 1px rgba(255, 83, 114, 0.28),
         0 14px 38px rgba(58, 8, 16, 0.5),
         inset 0 0 0 1px rgba(255, 162, 176, 0.2);
+    }
+
+    body.ui-hidden #hud,
+    body.ui-hidden #health-ui {
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(10px) scale(0.99);
+    }
+
+    #ui-toggle-hint {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      z-index: 16;
+      border-radius: 10px;
+      border: 1px solid rgba(155, 197, 235, 0.34);
+      background: rgba(8, 15, 25, 0.56);
+      color: rgba(226, 242, 255, 0.92);
+      padding: 8px 11px;
+      font-family: "Oxanium", "Space Grotesk", sans-serif;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+      backdrop-filter: blur(8px) saturate(120%);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+      transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    }
+
+    #ui-toggle-hint[data-open="true"] {
+      border-color: rgba(106, 213, 153, 0.52);
+      background: rgba(14, 28, 24, 0.6);
+      color: rgba(218, 255, 236, 0.94);
+    }
+
+    #ui-toggle-hint:hover {
+      transform: translateY(-1px);
+      background: rgba(16, 27, 40, 0.66);
+      border-color: rgba(190, 225, 255, 0.46);
+    }
+
+    #ui-toggle-hint:active {
+      transform: translateY(0);
     }
 
     #crosshair {
@@ -583,6 +634,13 @@
         width: calc(100vw - 20px);
       }
 
+      #ui-toggle-hint {
+        right: 10px;
+        bottom: 10px;
+        padding: 7px 9px;
+        font-size: 10px;
+      }
+
       #death-card {
         padding: 20px 16px 16px;
       }
@@ -614,7 +672,7 @@
     }
   </style>
 </head>
-<body>
+<body class="ui-hidden">
   <div id="hud" aria-live="polite">
     <div id="hud-top">
       <section class="hud-card" id="world-card">
@@ -721,6 +779,7 @@
           <div class="control-item"><kbd>Shift</kbd><span>Sprint</span></div>
           <div class="control-item"><kbd>Space</kbd><span>Jump</span></div>
           <div class="control-item"><kbd>LMB</kbd><span>Fire</span></div>
+          <div class="control-item"><kbd>U</kbd><span>Toggle HUD</span></div>
           <div class="control-item"><kbd>R</kbd><span>New Seed</span></div>
           <div class="control-item"><kbd>T</kbd><span>Rebuild</span></div>
           <div class="control-item"><kbd>Click</kbd><span>Lock Cursor</span></div>
@@ -742,6 +801,8 @@
       <span id="health-percent">100%</span>
     </div>
   </div>
+
+  <button id="ui-toggle-hint" type="button" data-open="false" aria-label="Toggle user interface">HUD OFF  -  U to show</button>
 
   <div id="crosshair" aria-hidden="true"><span></span></div>
   <div id="damage-vignette" aria-hidden="true"></div>
@@ -767,6 +828,6 @@
       }
     }
   </script>
-  <script type="module" src="./main.js?v=20260209-50"></script>
+  <script type="module" src="./main.js?v=20260209-51"></script>
 </body>
 </html>
