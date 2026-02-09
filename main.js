@@ -609,7 +609,7 @@ configureTerrainDetail(terrainMaterial);
 const floraMaterials = createFloraMaterials();
 
 function configureTerrainDetail(material) {
-  material.customProgramCacheKey = () => "terrain-detail-v2-stylized";
+  material.customProgramCacheKey = () => "terrain-detail-v3-stylized";
   material.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -620,10 +620,11 @@ function configureTerrainDetail(material) {
       `
       )
       .replace(
-        "#include <worldpos_vertex>",
+        "#include <begin_vertex>",
         `
-      #include <worldpos_vertex>
-      vDetailWorldPos = worldPosition.xyz;
+      #include <begin_vertex>
+      vec4 detailWorldPos = modelMatrix * vec4(transformed, 1.0);
+      vDetailWorldPos = detailWorldPos.xyz;
       `
       );
 
