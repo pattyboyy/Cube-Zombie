@@ -37,6 +37,15 @@ const PLAYER_SPRINT_MULTIPLIER = 1.55;
 const PLAYER_GRAVITY = 28;
 const PLAYER_JUMP_VELOCITY = 9.2;
 const PLAYER_TERMINAL_VELOCITY = 35;
+const PLAYER_SWIM_SPEED_FACTOR = 0.62;
+const PLAYER_SWIM_SPRINT_FACTOR = 0.84;
+const PLAYER_SWIM_UP_ACCEL = 17;
+const PLAYER_SWIM_DOWN_ACCEL = 13;
+const PLAYER_SWIM_GRAVITY = 6;
+const PLAYER_SWIM_BUOYANCY = 4.2;
+const PLAYER_SWIM_TERMINAL_UP = 7.5;
+const PLAYER_SWIM_TERMINAL_DOWN = 6.2;
+const PLAYER_SWIM_VERTICAL_DRAG = 5.2;
 const GODMODE_FLY_SPEED = 24;
 const GODMODE_FLY_BOOST_MULTIPLIER = 2.3;
 const PLAYER_HEIGHT = 1.78;
@@ -580,6 +589,7 @@ const moveRightScratch = new THREE.Vector3();
 const moveIntentScratch = new THREE.Vector3();
 const lastPlayerPos = new THREE.Vector3();
 const playerBoundsScratch = { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 };
+const playerWaterStateScratch = { feetInWater: false, bodyInWater: false, eyeInWater: false };
 const shotRaycaster = new THREE.Raycaster();
 const shotNdc = new THREE.Vector2(0, 0);
 const shotTargets = [];
@@ -5371,7 +5381,7 @@ function isFloraBlock(type) {
 }
 
 function isWaterBlock(type) {
-  return false;
+  return type === BLOCK.WATER;
 }
 
 function isLeafLikeBlock(type) {
@@ -6746,6 +6756,18 @@ function fillPlayerBounds(eyeX, eyeY, eyeZ, target = playerBoundsScratch) {
   return target;
 }
 
+function isWaterAtWorld(worldX, worldY, worldZ) {
+  return isWaterBlock(getBlockAtWorld(Math.floor(worldX), Math.floor(worldY), Math.floor(worldZ)));
+}
+
+function getPlayerWaterState(eyeX, eyeY, eyeZ, out = playerWaterStateScratch) {
+  const footY = eyeY - PLAYER_EYE_HEIGHT;
+  out.feetInWater = isWaterAtWorld(eyeX, footY + 0.12, eyeZ);
+  out.bodyInWater = isWaterAtWorld(eyeX, footY + PLAYER_HEIGHT * 0.54, eyeZ);
+  out.eyeInWater = isWaterAtWorld(eyeX, eyeY - 0.08, eyeZ);
+  return out;
+}
+
 function collidesPlayerAt(eyeX, eyeY, eyeZ) {
   const bounds = fillPlayerBounds(eyeX, eyeY, eyeZ);
   const minX = Math.floor(bounds.minX);
@@ -7768,8 +7790,19 @@ function movePlayerHorizontal(moveX, moveZ) {
   }
 }
 
-function applyVerticalPlayerPhysics(delta) {
-  playerVelocityY = Math.max(playerVelocityY - PLAYER_GRAVITY * delta, -PLAYER_TERMINAL_VELOCITY);
+function applyVerticalPlayerPhysics(delta, inWater = false) {
+  if (inWater) {
+    playerVelocityY += (PLAYER_SWIM_BUOYANCY - PLAYER_SWIM_GRAVITY) * delta;
+    playerVelocityY = THREE.MathUtils.clamp(
+      playerVelocityY,
+      -PLAYER_SWIM_TERMINAL_DOWN,
+      PLAYER_SWIM_TERMINAL_UP
+    );
+    playerVelocityY *= Math.max(0, 1 - PLAYER_SWIM_VERTICAL_DRAG * delta);
+  } else {
+    playerVelocityY = Math.max(playerVelocityY - PLAYER_GRAVITY * delta, -PLAYER_TERMINAL_VELOCITY);
+  }
+
   const verticalMove = THREE.MathUtils.clamp(playerVelocityY * delta, -4, 4);
   const steps = Math.max(1, Math.ceil(Math.abs(verticalMove) / PLAYER_COLLISION_STEP));
   const step = verticalMove / steps;
@@ -7807,13 +7840,13 @@ function updateMovement(delta) {
   const strafeInput = (pressedKeys.has("KeyD") ? 1 : 0) - (pressedKeys.has("KeyA") ? 1 : 0);
   const sprinting = pressedKeys.has("ShiftLeft") || pressedKeys.has("ShiftRight");
   const wantsJump = pressedKeys.has("Space");
+  const wantsDescend =
+    pressedKeys.has("ControlLeft") ||
+    pressedKeys.has("ControlRight") ||
+    pressedKeys.has("KeyC");
 
   if (godModeEnabled) {
-    const descendInput =
-      pressedKeys.has("ControlLeft") ||
-      pressedKeys.has("ControlRight") ||
-      pressedKeys.has("KeyC");
-    const ascendInput = (wantsJump ? 1 : 0) - (descendInput ? 1 : 0);
+    const ascendInput = (wantsJump ? 1 : 0) - (wantsDescend ? 1 : 0);
     jumpHeldLastFrame = wantsJump;
 
     camera.getWorldDirection(moveForwardScratch);
@@ -7847,7 +7880,17 @@ function updateMovement(delta) {
     return;
   }
 
-  if (wantsJump && !jumpHeldLastFrame && playerGrounded) {
+  const waterState = getPlayerWaterState(camera.position.x, camera.position.y, camera.position.z);
+  const inWater = waterState.feetInWater || waterState.bodyInWater;
+
+  if (inWater) {
+    if (wantsJump) {
+      playerVelocityY += PLAYER_SWIM_UP_ACCEL * delta;
+    }
+    if (wantsDescend) {
+      playerVelocityY -= PLAYER_SWIM_DOWN_ACCEL * delta;
+    }
+  } else if (wantsJump && !jumpHeldLastFrame && playerGrounded) {
     playerVelocityY = PLAYER_JUMP_VELOCITY;
     playerGrounded = false;
   }
@@ -7870,13 +7913,15 @@ function updateMovement(delta) {
 
     if (moveIntentScratch.lengthSq() > 1e-6) {
       moveIntentScratch.normalize();
-      const speed = PLAYER_WALK_SPEED * (sprinting ? PLAYER_SPRINT_MULTIPLIER : 1);
+      const speed = inWater
+        ? PLAYER_WALK_SPEED * (sprinting ? PLAYER_SWIM_SPRINT_FACTOR : PLAYER_SWIM_SPEED_FACTOR)
+        : PLAYER_WALK_SPEED * (sprinting ? PLAYER_SPRINT_MULTIPLIER : 1);
       moveIntentScratch.multiplyScalar(speed * delta);
       movePlayerHorizontal(moveIntentScratch.x, moveIntentScratch.z);
     }
   }
 
-  applyVerticalPlayerPhysics(delta);
+  applyVerticalPlayerPhysics(delta, inWater);
   camera.position.y = THREE.MathUtils.clamp(camera.position.y, 2, WORLD_HEIGHT + 40);
 }
 
@@ -8051,6 +8096,24 @@ function updateLighting(delta) {
   const dynamicFogFar = FOG_FAR_DISTANCE * (1 - weather.fog * 0.4);
   scene.fog.near = Math.max(CHUNK_SIZE_X, dynamicFogNear);
   scene.fog.far = Math.max(scene.fog.near + CHUNK_SIZE_X * 0.7, dynamicFogFar);
+  if (isWaterAtWorld(camera.position.x, camera.position.y - 0.08, camera.position.z)) {
+    const eyeBlockX = Math.floor(camera.position.x);
+    const eyeBlockY = Math.floor(camera.position.y - 0.08);
+    const eyeBlockZ = Math.floor(camera.position.z);
+    let waterDepthAbove = 0;
+    for (let i = 0; i < 10; i += 1) {
+      if (!isWaterBlock(getBlockAtWorld(eyeBlockX, eyeBlockY + i, eyeBlockZ))) break;
+      waterDepthAbove = i + 1;
+    }
+    const depthFactor = THREE.MathUtils.clamp((waterDepthAbove - 1) / 9, 0, 1);
+    fogScratch
+      .copy(WATER_BLOCK_SHALLOW_COLOR)
+      .lerp(WATER_BLOCK_DEEP_COLOR, 0.5 + depthFactor * 0.44);
+    scene.fog.color.copy(fogScratch);
+    const underwaterFar = THREE.MathUtils.lerp(CHUNK_SIZE_X * 2.6, CHUNK_SIZE_X * 1.2, depthFactor);
+    scene.fog.near = Math.max(0.4, underwaterFar * 0.16);
+    scene.fog.far = Math.max(scene.fog.near + CHUNK_SIZE_X * 0.35, underwaterFar);
+  }
 
   if (skyDome && skyUniforms) {
     skyDome.position.copy(camera.position);
