@@ -614,8 +614,52 @@ configureTerrainDetail(terrainMaterial);
 const floraMaterials = createFloraMaterials();
 
 function configureTerrainDetail(material) {
-  // Keep default MeshStandardMaterial shader hooks intact.
+  const detailTexture = createTerrainDetailTexture();
+  material.map = detailTexture;
   material.needsUpdate = true;
+}
+
+function createTerrainDetailTexture() {
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.createImageData(size, size);
+  const pixels = imageData.data;
+  const seed = worldSeed ^ 0x51d7348b;
+
+  for (let y = 0; y < size; y += 1) {
+    const yNorm = y / (size - 1);
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
+      const coarse = textureNoise2d(x >> 2, y >> 2, seed);
+      const fine = textureNoise2d(x, y, seed ^ 0x9e3779b9);
+      const grain = textureNoise2d((x * 3) >> 1, (y * 3) >> 1, seed ^ 0x7f4a7c15);
+      const strata = Math.sin(yNorm * 38 + coarse * 6.28318) * 0.06;
+      const value = THREE.MathUtils.clamp(
+        0.88 + (coarse - 0.5) * 0.16 + (fine - 0.5) * 0.08 + (grain - 0.5) * 0.06 + strata,
+        0.72,
+        1.0
+      );
+      const color = Math.round(value * 255);
+      pixels[i] = color;
+      pixels[i + 1] = color;
+      pixels[i + 2] = color;
+      pixels[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipMapLinearFilter;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = true;
+  texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return texture;
 }
 
 function readSeedFromQuery() {
@@ -916,6 +960,32 @@ function createCloudTexture(variant = 0) {
     ctx.arc(blob[0], blob[1], blob[2], 0, Math.PI * 2);
     ctx.fill();
   }
+
+  const seed = (worldSeed ^ ((variant + 1) * 0x45d9f3b)) >>> 0;
+  const imageData = ctx.getImageData(0, 0, size, size);
+  const pixels = imageData.data;
+  for (let y = 0; y < size; y += 1) {
+    const yNorm = y / (size - 1);
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
+      const alpha = pixels[i + 3];
+      if (alpha === 0) continue;
+
+      const soft = textureNoise2d(x >> 2, y >> 2, seed);
+      const fine = textureNoise2d(x, y, seed ^ 0x9e3779b9);
+      const brightness = THREE.MathUtils.clamp(
+        0.9 + (soft - 0.5) * 0.2 + (fine - 0.5) * 0.08 - yNorm * 0.08,
+        0.68,
+        1.08
+      );
+      const value = Math.round(255 * brightness);
+      pixels[i] = value;
+      pixels[i + 1] = value;
+      pixels[i + 2] = value;
+      pixels[i + 3] = Math.round(alpha * THREE.MathUtils.clamp(0.92 + (soft - 0.5) * 0.18, 0.72, 1.0));
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.LinearFilter;
@@ -5400,9 +5470,33 @@ function textureNoise2d(x, y, seed) {
 }
 
 function applyFloraTextureDetail(ctx, size, kind) {
-  void ctx;
-  void size;
-  void kind;
+  const seed = textureSeedFromString(kind);
+  const imageData = ctx.getImageData(0, 0, size, size);
+  const pixels = imageData.data;
+
+  for (let y = 0; y < size; y += 1) {
+    const yNorm = y / (size - 1);
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4;
+      const alpha = pixels[i + 3];
+      if (alpha === 0) continue;
+
+      const coarse = textureNoise2d(x >> 1, y >> 1, seed);
+      const fine = textureNoise2d(x, y, seed ^ 0x9e3779b9);
+      const ribbing = Math.sin(x * 0.46 + y * 0.18 + seed * 0.00007) * 0.04;
+      const vertical = 0.76 + (1 - yNorm) * 0.28;
+      let brightness = vertical + (coarse - 0.5) * 0.2 + (fine - 0.5) * 0.14 + ribbing;
+      if (alpha < 180) brightness *= 0.93;
+      brightness = THREE.MathUtils.clamp(brightness, 0.42, 1.0);
+
+      const value = Math.round(brightness * 255);
+      pixels[i] = value;
+      pixels[i + 1] = value;
+      pixels[i + 2] = value;
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
 }
 
 function createFloraTexture(kind) {
