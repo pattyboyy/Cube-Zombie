@@ -218,6 +218,55 @@ const CLOUD_ALTITUDE_BASE = WORLD_HEIGHT + 34;
 const CLOUD_ALTITUDE_RANGE = 26;
 const CLOUD_DRIFT_SPEED = 0.34;
 const CLOUD_MIN_SEPARATION = 58;
+const WEATHER = Object.freeze({
+  CLEAR: 0,
+  OVERCAST: 1,
+  DRIZZLE: 2,
+  RAIN: 3,
+  STORM: 4,
+  SNOW: 5,
+  FOG: 6,
+  BLIZZARD: 7,
+});
+const WEATHER_NAMES = {
+  [WEATHER.CLEAR]: "Clear",
+  [WEATHER.OVERCAST]: "Overcast",
+  [WEATHER.DRIZZLE]: "Drizzle",
+  [WEATHER.RAIN]: "Rain",
+  [WEATHER.STORM]: "Storm",
+  [WEATHER.SNOW]: "Snow",
+  [WEATHER.FOG]: "Fog",
+  [WEATHER.BLIZZARD]: "Blizzard",
+};
+const WEATHER_PRESETS = {
+  [WEATHER.CLEAR]: { cloudiness: 0.08, rain: 0, snow: 0, fog: 0.02, skyDarken: 0.0, wind: 0.28, lightning: 0.0 },
+  [WEATHER.OVERCAST]: { cloudiness: 0.62, rain: 0, snow: 0, fog: 0.13, skyDarken: 0.22, wind: 0.37, lightning: 0.0 },
+  [WEATHER.DRIZZLE]: { cloudiness: 0.74, rain: 0.34, snow: 0, fog: 0.18, skyDarken: 0.32, wind: 0.46, lightning: 0.03 },
+  [WEATHER.RAIN]: { cloudiness: 0.84, rain: 0.72, snow: 0, fog: 0.26, skyDarken: 0.43, wind: 0.58, lightning: 0.1 },
+  [WEATHER.STORM]: { cloudiness: 0.94, rain: 1.0, snow: 0, fog: 0.38, skyDarken: 0.58, wind: 0.82, lightning: 0.28 },
+  [WEATHER.SNOW]: { cloudiness: 0.88, rain: 0, snow: 0.86, fog: 0.32, skyDarken: 0.45, wind: 0.44, lightning: 0.04 },
+  [WEATHER.FOG]: { cloudiness: 0.68, rain: 0, snow: 0, fog: 0.56, skyDarken: 0.27, wind: 0.18, lightning: 0.0 },
+  [WEATHER.BLIZZARD]: { cloudiness: 0.98, rain: 0, snow: 1.0, fog: 0.5, skyDarken: 0.62, wind: 0.78, lightning: 0.08 },
+};
+const WEATHER_HOLD_MIN_SECONDS = 34;
+const WEATHER_HOLD_MAX_SECONDS = 92;
+const WEATHER_TRANSITION_MIN_SECONDS = 10;
+const WEATHER_TRANSITION_MAX_SECONDS = 24;
+const WEATHER_BIOME_SAMPLE_INTERVAL = 1.6;
+const WEATHER_FRONT_SCALE = 0.0015;
+const WEATHER_FRONT_TIME_SCALE = 0.065;
+const WEATHER_PARTICLE_COUNT = 2400;
+const WEATHER_PARTICLE_RADIUS = 52;
+const WEATHER_PARTICLE_MIN_Y = -10;
+const WEATHER_PARTICLE_MAX_Y = 44;
+const WEATHER_PARTICLE_HEIGHT = WEATHER_PARTICLE_MAX_Y - WEATHER_PARTICLE_MIN_Y;
+const WEATHER_LIGHTNING_INTENSITY = 2.8;
+const WEATHER_SKY_OVERCAST = new THREE.Color(0x6c83a3);
+const WEATHER_FOG_OVERCAST = new THREE.Color(0x6f86a5);
+const WEATHER_RAIN_TINT = new THREE.Color(0x6881a4);
+const WEATHER_SNOW_TINT = new THREE.Color(0xdce9f8);
+const WEATHER_FOG_TINT = new THREE.Color(0xc8d8ea);
+const WEATHER_LIGHTNING_TINT = new THREE.Color(0xe4efff);
 const SKY_DOME_RADIUS = 540;
 const STAR_COUNT = 4600;
 const STARFIELD_RADIUS = SKY_DOME_RADIUS * 0.94;
@@ -312,6 +361,7 @@ const chunkLoadQueue = [];
 const queuedMeshKeys = new Set();
 const chunkMeshQueue = [];
 const cloudSeeds = [];
+const cloudVariantCounts = new Uint16Array(CLOUD_VARIANT_COUNT);
 
 let worldSeed = readSeedFromQuery() ?? randomSeed();
 let noiseOffsetX = 0;
@@ -371,6 +421,47 @@ let shotsFired = 0;
 let shotsHit = 0;
 let hudErrorMessage = "";
 let uiVisible = false;
+const weatherState = {
+  currentType: WEATHER.CLEAR,
+  targetType: WEATHER.CLEAR,
+  transitionDuration: 0,
+  transitionElapsed: 0,
+  holdTimer: WEATHER_HOLD_MIN_SECONDS,
+  biomeSampleTimer: 0,
+  sampledBiome: BIOME.PLAINS,
+  sampledTemperature: 0.5,
+  sampledMoisture: 0.5,
+  sampledRuggedness: 0.3,
+  sampledRiver: 0,
+  frontMoisture: 0.5,
+  frontInstability: 0.5,
+  frontCold: 0.5,
+  windAngle: Math.random() * Math.PI * 2,
+  windTargetAngle: 0,
+  windStrength: WEATHER_PRESETS[WEATHER.CLEAR].wind,
+  windTargetStrength: WEATHER_PRESETS[WEATHER.CLEAR].wind,
+  windTimer: 0,
+  lightning: 0,
+  lightningCooldown: 0,
+  cloudiness: WEATHER_PRESETS[WEATHER.CLEAR].cloudiness,
+  rain: 0,
+  snow: 0,
+  fog: WEATHER_PRESETS[WEATHER.CLEAR].fog,
+  skyDarken: 0,
+  lightningRate: 0,
+  windX: 1,
+  windZ: 0,
+  displayName: WEATHER_NAMES[WEATHER.CLEAR],
+  particles: null,
+  particleMaterial: null,
+  particlePositions: null,
+  particleFall: null,
+  particleDriftX: null,
+  particleDriftZ: null,
+  lightningLight: null,
+  activeParticleCount: 0,
+};
+weatherState.windTargetAngle = weatherState.windAngle;
 const zombies = [];
 const activeProjectiles = [];
 const impactParticles = [];
@@ -499,6 +590,7 @@ const zombieToPlayerScratch = new THREE.Vector3();
 const zombieMoveScratch = new THREE.Vector3();
 const biomeBlendScratch = createBiomeBlendState();
 const terrainBiomeBlendScratch = createBiomeBlendState();
+const weatherBiomeBlendScratch = createBiomeBlendState();
 const terrainMaterial = new THREE.MeshStandardMaterial({
   vertexColors: true,
   flatShading: true,
@@ -1392,13 +1484,534 @@ function wrapCentered(value, size) {
   return ((value + half) % size + size) % size - half;
 }
 
-function updateCloudLayer(delta, daylight) {
+function isColdBiomeForWeather(biome) {
+  return biome === BIOME.TUNDRA || biome === BIOME.GLACIER || biome === BIOME.ALPINE;
+}
+
+function isAridBiomeForWeather(biome) {
+  return (
+    biome === BIOME.DESERT ||
+    biome === BIOME.BADLANDS ||
+    biome === BIOME.MESA ||
+    biome === BIOME.VOLCANIC ||
+    biome === BIOME.STEPPE
+  );
+}
+
+function isHumidBiomeForWeather(biome) {
+  return (
+    biome === BIOME.SWAMP ||
+    biome === BIOME.MANGROVE ||
+    biome === BIOME.JUNGLE ||
+    biome === BIOME.FOREST ||
+    biome === BIOME.REDWOOD
+  );
+}
+
+function sampleWeatherClimate(worldX, worldZ, daylight) {
+  const riverIntensity = getRiverIntensity(worldX, worldZ);
+  const blend = getBiomeBlendAt(worldX, worldZ, riverIntensity, weatherBiomeBlendScratch);
+  weatherState.sampledBiome = blend.dominantBiome;
+  weatherState.sampledTemperature = blend.temperature;
+  weatherState.sampledMoisture = blend.moisture;
+  weatherState.sampledRuggedness = blend.ruggedness;
+  weatherState.sampledRiver = riverIntensity;
+
+  const flow = dayPhase * WEATHER_FRONT_TIME_SCALE;
+  const frontX = worldX * WEATHER_FRONT_SCALE + noiseOffsetX * 0.00017 + flow;
+  const frontZ = worldZ * WEATHER_FRONT_SCALE + noiseOffsetZ * 0.00017 - flow * 0.74;
+  const frontMoisture = fbm2D(frontX + 182, frontZ - 143, 3) * 0.5 + 0.5;
+  const frontPressure = fbm2D(frontX * 1.37 - 91, frontZ * 1.37 + 67, 2) * 0.5 + 0.5;
+  const frontCold = fbm2D(frontX * 0.82 + 310, frontZ * 0.82 - 240, 2) * 0.5 + 0.5;
+  weatherState.frontMoisture = THREE.MathUtils.clamp(frontMoisture * 0.74 + blend.moisture * 0.26, 0, 1);
+  weatherState.frontInstability = THREE.MathUtils.clamp(
+    frontPressure * 0.62 + frontMoisture * 0.22 + blend.ruggedness * 0.16,
+    0,
+    1
+  );
+  weatherState.frontCold = THREE.MathUtils.clamp(frontCold * 0.6 + (1 - blend.temperature) * 0.4 + (1 - daylight) * 0.08, 0, 1);
+}
+
+function pickWeatherForBiome(
+  biome,
+  daylight,
+  temperature = 0.5,
+  moisture = 0.5,
+  ruggedness = 0.3,
+  river = 0,
+  frontMoisture = 0.5,
+  frontInstability = 0.5,
+  frontCold = 0.5
+) {
+  const humidity = THREE.MathUtils.clamp(moisture * 0.64 + frontMoisture * 0.36 + river * 0.26, 0, 1);
+  const aridity = THREE.MathUtils.clamp((1 - moisture) * 0.7 + (1 - frontMoisture) * 0.3, 0, 1);
+  const coldness = THREE.MathUtils.clamp((1 - temperature) * 0.72 + frontCold * 0.28, 0, 1);
+  const instability = THREE.MathUtils.clamp(frontInstability * 0.7 + humidity * 0.18 + ruggedness * 0.12, 0, 1);
+  const cloudTendency = THREE.MathUtils.clamp(frontMoisture * 0.54 + frontInstability * 0.46, 0, 1);
+  const fogAffinity = THREE.MathUtils.clamp(
+    (humidity * 0.56 + river * 0.44) * (0.7 + (1 - daylight) * 0.38) * (1 - ruggedness * 0.32),
+    0,
+    1
+  );
+
+  const weights = [
+    0.18 + aridity * 0.42 + (daylight > 0.74 ? 0.08 : 0),
+    0.13 + humidity * 0.32 + cloudTendency * 0.24,
+    0.03 + humidity * 0.26 + cloudTendency * 0.08,
+    0.02 + humidity * 0.34 + instability * 0.24,
+    Math.max(0, instability * humidity * (0.34 + ruggedness * 0.22) * (0.84 + (1 - daylight) * 0.16) - coldness * 0.12),
+    0.02 + coldness * (0.24 + humidity * 0.32),
+    0.01 + fogAffinity * 0.44,
+    Math.max(0, coldness * humidity * instability * (0.56 + ruggedness * 0.24) - aridity * 0.14),
+  ];
+
+  if (isColdBiomeForWeather(biome)) {
+    weights[WEATHER.SNOW] += 0.24 + coldness * 0.24;
+    weights[WEATHER.BLIZZARD] += 0.08 + instability * 0.1;
+    weights[WEATHER.RAIN] *= 0.42;
+    weights[WEATHER.DRIZZLE] *= 0.5;
+    weights[WEATHER.CLEAR] *= 0.62;
+    weights[WEATHER.OVERCAST] += 0.14;
+  }
+
+  if (isAridBiomeForWeather(biome)) {
+    const drySuppression = 1 - THREE.MathUtils.clamp(aridity * 0.82, 0, 0.92);
+    weights[WEATHER.CLEAR] += 0.28 + aridity * 0.2;
+    weights[WEATHER.OVERCAST] += 0.08;
+    weights[WEATHER.DRIZZLE] *= drySuppression * 0.46;
+    weights[WEATHER.RAIN] *= drySuppression * 0.28;
+    weights[WEATHER.STORM] *= drySuppression * 0.22;
+    weights[WEATHER.FOG] *= drySuppression * 0.5;
+  }
+
+  if (biome === BIOME.OASIS) {
+    weights[WEATHER.CLEAR] += 0.1;
+    weights[WEATHER.DRIZZLE] += 0.08;
+    weights[WEATHER.RAIN] += 0.1;
+    weights[WEATHER.FOG] += 0.06;
+  }
+
+  if (isHumidBiomeForWeather(biome)) {
+    weights[WEATHER.CLEAR] *= 0.6;
+    weights[WEATHER.DRIZZLE] += 0.16;
+    weights[WEATHER.RAIN] += 0.24;
+    weights[WEATHER.STORM] += 0.14;
+    weights[WEATHER.FOG] += 0.14;
+  }
+
+  if (biome === BIOME.SWAMP || biome === BIOME.MANGROVE) {
+    weights[WEATHER.FOG] += 0.2;
+    weights[WEATHER.DRIZZLE] += 0.12;
+  }
+
+  if (biome === BIOME.VOLCANIC) {
+    weights[WEATHER.FOG] += 0.07;
+    weights[WEATHER.STORM] += instability * 0.08;
+  }
+
+  let total = 0;
+  for (let i = 0; i < weights.length; i += 1) {
+    weights[i] = Math.max(0.0005, weights[i]);
+    total += weights[i];
+  }
+
+  if (total <= 0.0001) return WEATHER.CLEAR;
+  let roll = Math.random() * total;
+  for (let i = 0; i < weights.length; i += 1) {
+    roll -= weights[i];
+    if (roll <= 0) return i;
+  }
+  return WEATHER.CLEAR;
+}
+
+function getRandomWeatherHoldSeconds(type) {
+  let min = WEATHER_HOLD_MIN_SECONDS;
+  let max = WEATHER_HOLD_MAX_SECONDS;
+  if (type === WEATHER.STORM) {
+    min = 20;
+    max = 52;
+  } else if (type === WEATHER.BLIZZARD) {
+    min = 22;
+    max = 58;
+  } else if (type === WEATHER.FOG) {
+    min = 26;
+    max = 72;
+  } else if (type === WEATHER.DRIZZLE || type === WEATHER.RAIN || type === WEATHER.SNOW) {
+    min = 24;
+    max = 64;
+  } else if (type === WEATHER.CLEAR) {
+    min = 34;
+    max = 104;
+  }
+  return min + Math.random() * (max - min);
+}
+
+function getRandomWeatherTransitionSeconds(fromType, toType) {
+  let value = WEATHER_TRANSITION_MIN_SECONDS + Math.random() * (WEATHER_TRANSITION_MAX_SECONDS - WEATHER_TRANSITION_MIN_SECONDS);
+  if (fromType === WEATHER.STORM || toType === WEATHER.STORM || fromType === WEATHER.BLIZZARD || toType === WEATHER.BLIZZARD) value *= 0.8;
+  if (fromType === WEATHER.SNOW || toType === WEATHER.SNOW || fromType === WEATHER.FOG || toType === WEATHER.FOG) value *= 1.12;
+  return value;
+}
+
+function resetWeatherParticle(index, respawnAtTop = false) {
+  const positions = weatherState.particlePositions;
+  if (!positions) return;
+  const ptr = index * 3;
+  const angle = Math.random() * Math.PI * 2;
+  const radius = Math.sqrt(Math.random()) * WEATHER_PARTICLE_RADIUS;
+  positions[ptr] = Math.cos(angle) * radius;
+  positions[ptr + 2] = Math.sin(angle) * radius;
+  positions[ptr + 1] = respawnAtTop
+    ? WEATHER_PARTICLE_MAX_Y - Math.random() * 3.2
+    : WEATHER_PARTICLE_MIN_Y + Math.random() * WEATHER_PARTICLE_HEIGHT;
+}
+
+function createWeatherSystem() {
+  if (weatherState.particles) {
+    weatherState.particles.geometry.dispose();
+    weatherState.particleMaterial?.dispose();
+    scene.remove(weatherState.particles);
+    weatherState.particles = null;
+  }
+  if (weatherState.lightningLight) {
+    scene.remove(weatherState.lightningLight);
+    weatherState.lightningLight.dispose();
+    weatherState.lightningLight = null;
+  }
+
+  const positions = new Float32Array(WEATHER_PARTICLE_COUNT * 3);
+  const sizes = new Float32Array(WEATHER_PARTICLE_COUNT);
+  const alphaSeed = new Float32Array(WEATHER_PARTICLE_COUNT);
+  const fall = new Float32Array(WEATHER_PARTICLE_COUNT);
+  const driftX = new Float32Array(WEATHER_PARTICLE_COUNT);
+  const driftZ = new Float32Array(WEATHER_PARTICLE_COUNT);
+
+  weatherState.particlePositions = positions;
+  weatherState.particleFall = fall;
+  weatherState.particleDriftX = driftX;
+  weatherState.particleDriftZ = driftZ;
+
+  for (let i = 0; i < WEATHER_PARTICLE_COUNT; i += 1) {
+    resetWeatherParticle(i, false);
+    sizes[i] = 0.82 + Math.random() * 1.25;
+    alphaSeed[i] = 0.55 + Math.random() * 0.45;
+    fall[i] = 0.62 + Math.random() * 1.15;
+    driftX[i] = (Math.random() * 2 - 1) * 0.9;
+    driftZ[i] = (Math.random() * 2 - 1) * 0.9;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  const positionAttr = new THREE.BufferAttribute(positions, 3);
+  positionAttr.setUsage(THREE.DynamicDrawUsage);
+  geometry.setAttribute("position", positionAttr);
+  geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+  geometry.setAttribute("aAlphaSeed", new THREE.BufferAttribute(alphaSeed, 1));
+  geometry.setDrawRange(0, 0);
+
+  weatherState.particleMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uIntensity: { value: 0 },
+      uSnowMix: { value: 0 },
+      uDaylight: { value: 1 },
+      uRainColor: { value: new THREE.Color(0x9bc8ea) },
+      uSnowColor: { value: new THREE.Color(0xf3f9ff) },
+    },
+    vertexShader: `
+      attribute float aSize;
+      attribute float aAlphaSeed;
+      uniform float uSnowMix;
+      varying float vAlphaSeed;
+      varying float vSnowMix;
+      void main() {
+        vAlphaSeed = aAlphaSeed;
+        vSnowMix = uSnowMix;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        float distanceScale = mix(360.0, 240.0, uSnowMix) / max(8.0, -mvPosition.z);
+        float baseSize = mix(aSize * 1.04, aSize * 2.2, uSnowMix);
+        gl_PointSize = clamp(baseSize * distanceScale, 0.8, mix(3.2, 6.4, uSnowMix));
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform float uIntensity;
+      uniform float uSnowMix;
+      uniform float uDaylight;
+      uniform vec3 uRainColor;
+      uniform vec3 uSnowColor;
+      varying float vAlphaSeed;
+      varying float vSnowMix;
+      void main() {
+        vec2 p = gl_PointCoord * 2.0 - 1.0;
+        float rainShape = exp(-abs(p.x) * 13.0) * exp(-abs(p.y) * 2.9);
+        float snowShape = exp(-dot(p, p) * 2.7);
+        float shape = mix(rainShape, snowShape, vSnowMix);
+        float alpha = shape * uIntensity * vAlphaSeed * (0.62 + (1.0 - uDaylight) * 0.38);
+        if (alpha < 0.015) discard;
+        vec3 color = mix(uRainColor, uSnowColor, vSnowMix);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.NormalBlending,
+    fog: false,
+  });
+
+  weatherState.particles = new THREE.Points(geometry, weatherState.particleMaterial);
+  weatherState.particles.visible = false;
+  weatherState.particles.frustumCulled = false;
+  weatherState.particles.renderOrder = 4;
+  scene.add(weatherState.particles);
+
+  weatherState.lightningLight = new THREE.PointLight(0xe5efff, 0, 190, 2);
+  weatherState.lightningLight.position.set(0, WORLD_HEIGHT + 40, 0);
+  scene.add(weatherState.lightningLight);
+}
+
+function resetWeatherState() {
+  const sampleX = Math.floor(camera.position.x);
+  const sampleZ = Math.floor(camera.position.z);
+  const daylight = THREE.MathUtils.clamp((Math.sin(dayPhase) + 0.12) / 1.12, 0, 1);
+  sampleWeatherClimate(sampleX, sampleZ, daylight);
+  const startType = pickWeatherForBiome(
+    weatherState.sampledBiome,
+    daylight,
+    weatherState.sampledTemperature,
+    weatherState.sampledMoisture,
+    weatherState.sampledRuggedness,
+    weatherState.sampledRiver,
+    weatherState.frontMoisture,
+    weatherState.frontInstability,
+    weatherState.frontCold
+  );
+  const preset = WEATHER_PRESETS[startType];
+
+  weatherState.currentType = startType;
+  weatherState.targetType = startType;
+  weatherState.transitionDuration = 0;
+  weatherState.transitionElapsed = 0;
+  weatherState.holdTimer = getRandomWeatherHoldSeconds(startType);
+  weatherState.biomeSampleTimer = WEATHER_BIOME_SAMPLE_INTERVAL * (0.78 + Math.random() * 0.48);
+
+  weatherState.windAngle = Math.random() * Math.PI * 2;
+  weatherState.windTargetAngle = weatherState.windAngle + (Math.random() * 2 - 1) * 0.26;
+  weatherState.windStrength = preset.wind;
+  weatherState.windTargetStrength = preset.wind * (0.82 + Math.random() * 0.36);
+  weatherState.windTimer = 4.5 + Math.random() * 10.5;
+  weatherState.windX = Math.cos(weatherState.windAngle);
+  weatherState.windZ = Math.sin(weatherState.windAngle);
+
+  weatherState.lightning = 0;
+  weatherState.lightningCooldown = 2 + Math.random() * 2.8;
+  weatherState.cloudiness = preset.cloudiness;
+  weatherState.rain = preset.rain;
+  weatherState.snow = preset.snow;
+  weatherState.fog = preset.fog;
+  weatherState.skyDarken = preset.skyDarken;
+  weatherState.lightningRate = preset.lightning;
+  weatherState.displayName = WEATHER_NAMES[startType];
+  weatherState.activeParticleCount = 0;
+
+  if (weatherState.lightningLight) {
+    weatherState.lightningLight.intensity = 0;
+  }
+
+  if (weatherState.particlePositions && weatherState.particles) {
+    for (let i = 0; i < WEATHER_PARTICLE_COUNT; i += 1) {
+      resetWeatherParticle(i, false);
+    }
+    const positionAttr = weatherState.particles.geometry.getAttribute("position");
+    if (positionAttr) positionAttr.needsUpdate = true;
+    weatherState.particles.geometry.setDrawRange(0, 0);
+    weatherState.particles.visible = false;
+  }
+}
+
+function updateWeatherParticles(delta, daylight) {
+  if (!weatherState.particles || !weatherState.particleMaterial || !weatherState.particlePositions) return;
+
+  const precipitation = Math.max(weatherState.rain, weatherState.snow);
+  if (precipitation < 0.015) {
+    weatherState.particleMaterial.uniforms.uIntensity.value = 0;
+    weatherState.particles.visible = false;
+    weatherState.activeParticleCount = 0;
+    return;
+  }
+
+  weatherState.particles.visible = true;
+  weatherState.particles.position.set(camera.position.x, camera.position.y, camera.position.z);
+
+  const snowMix = weatherState.snow / Math.max(0.0001, precipitation);
+  const intensity = THREE.MathUtils.clamp(precipitation * (0.34 + weatherState.cloudiness * 0.72), 0, 1);
+  const activeCount = Math.floor(WEATHER_PARTICLE_COUNT * (0.2 + intensity * 0.8));
+  if (activeCount !== weatherState.activeParticleCount) {
+    weatherState.activeParticleCount = activeCount;
+    weatherState.particles.geometry.setDrawRange(0, activeCount);
+  }
+
+  weatherState.particleMaterial.uniforms.uIntensity.value = intensity;
+  weatherState.particleMaterial.uniforms.uSnowMix.value = snowMix;
+  weatherState.particleMaterial.uniforms.uDaylight.value = daylight;
+
+  const fallBase = THREE.MathUtils.lerp(34, 11.5, snowMix);
+  const windPush = 1.2 + weatherState.windStrength * 2.6;
+  const windX = weatherState.windX * windPush;
+  const windZ = weatherState.windZ * windPush;
+  const lateralJitter = snowMix > 0.4 ? 0.85 : 0.2;
+  const bounds = WEATHER_PARTICLE_RADIUS * 2;
+  const positions = weatherState.particlePositions;
+  const fall = weatherState.particleFall;
+  const driftX = weatherState.particleDriftX;
+  const driftZ = weatherState.particleDriftZ;
+
+  for (let i = 0; i < activeCount; i += 1) {
+    const ptr = i * 3;
+    let x = positions[ptr];
+    let y = positions[ptr + 1];
+    let z = positions[ptr + 2];
+
+    y -= delta * fallBase * fall[i] * (0.62 + intensity * 0.78);
+    x += delta * (windX + driftX[i] * lateralJitter);
+    z += delta * (windZ + driftZ[i] * lateralJitter);
+    x = wrapCentered(x, bounds);
+    z = wrapCentered(z, bounds);
+
+    if (y < WEATHER_PARTICLE_MIN_Y) {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.sqrt(Math.random()) * WEATHER_PARTICLE_RADIUS;
+      x = Math.cos(angle) * radius;
+      z = Math.sin(angle) * radius;
+      y = WEATHER_PARTICLE_MAX_Y - Math.random() * 3.2;
+    }
+
+    positions[ptr] = x;
+    positions[ptr + 1] = y;
+    positions[ptr + 2] = z;
+  }
+
+  const positionAttr = weatherState.particles.geometry.getAttribute("position");
+  if (positionAttr) positionAttr.needsUpdate = true;
+}
+
+function updateWeatherSystem(delta, daylight) {
+  weatherState.biomeSampleTimer -= delta;
+  if (weatherState.biomeSampleTimer <= 0) {
+    const sampleX = Math.floor(camera.position.x);
+    const sampleZ = Math.floor(camera.position.z);
+    sampleWeatherClimate(sampleX, sampleZ, daylight);
+    weatherState.biomeSampleTimer = WEATHER_BIOME_SAMPLE_INTERVAL * (0.78 + Math.random() * 0.48);
+  }
+
+  if (weatherState.transitionDuration > 0) {
+    weatherState.transitionElapsed = Math.min(
+      weatherState.transitionDuration,
+      weatherState.transitionElapsed + delta
+    );
+    if (weatherState.transitionElapsed >= weatherState.transitionDuration) {
+      weatherState.currentType = weatherState.targetType;
+      weatherState.transitionDuration = 0;
+      weatherState.transitionElapsed = 0;
+      weatherState.holdTimer = getRandomWeatherHoldSeconds(weatherState.currentType);
+    }
+  } else {
+    weatherState.holdTimer -= delta;
+    if (weatherState.holdTimer <= 0) {
+      const nextType = pickWeatherForBiome(
+        weatherState.sampledBiome,
+        daylight,
+        weatherState.sampledTemperature,
+        weatherState.sampledMoisture,
+        weatherState.sampledRuggedness,
+        weatherState.sampledRiver,
+        weatherState.frontMoisture,
+        weatherState.frontInstability,
+        weatherState.frontCold
+      );
+      if (nextType !== weatherState.currentType) {
+        weatherState.targetType = nextType;
+        weatherState.transitionDuration = getRandomWeatherTransitionSeconds(weatherState.currentType, nextType);
+        weatherState.transitionElapsed = 0;
+      } else {
+        weatherState.holdTimer = getRandomWeatherHoldSeconds(weatherState.currentType) * 0.56;
+      }
+    }
+  }
+
+  const fromPreset = WEATHER_PRESETS[weatherState.currentType];
+  const toPreset = WEATHER_PRESETS[weatherState.targetType];
+  const blend = weatherState.transitionDuration <= 0
+    ? 1
+    : THREE.MathUtils.clamp(weatherState.transitionElapsed / weatherState.transitionDuration, 0, 1);
+
+  weatherState.cloudiness = THREE.MathUtils.lerp(fromPreset.cloudiness, toPreset.cloudiness, blend);
+  weatherState.rain = THREE.MathUtils.lerp(fromPreset.rain, toPreset.rain, blend);
+  weatherState.snow = THREE.MathUtils.lerp(fromPreset.snow, toPreset.snow, blend);
+  weatherState.fog = THREE.MathUtils.lerp(fromPreset.fog, toPreset.fog, blend);
+  weatherState.skyDarken = THREE.MathUtils.lerp(fromPreset.skyDarken, toPreset.skyDarken, blend);
+  weatherState.lightningRate = THREE.MathUtils.lerp(fromPreset.lightning, toPreset.lightning, blend);
+  const desiredWind = THREE.MathUtils.lerp(fromPreset.wind, toPreset.wind, blend);
+
+  weatherState.windTimer -= delta;
+  if (weatherState.windTimer <= 0) {
+    const arc = 0.34 + weatherState.cloudiness * 0.66;
+    weatherState.windTargetAngle += (Math.random() * 2 - 1) * arc;
+    weatherState.windTargetStrength = desiredWind * (0.78 + Math.random() * 0.44);
+    weatherState.windTimer = 4.8 + Math.random() * 10.6;
+  }
+
+  const angleDelta = Math.atan2(
+    Math.sin(weatherState.windTargetAngle - weatherState.windAngle),
+    Math.cos(weatherState.windTargetAngle - weatherState.windAngle)
+  );
+  weatherState.windAngle += angleDelta * Math.min(1, delta * 0.42);
+  const windBlendTarget = (desiredWind + weatherState.windTargetStrength) * 0.5;
+  weatherState.windStrength += (windBlendTarget - weatherState.windStrength) * Math.min(1, delta * 0.34);
+  weatherState.windX = Math.cos(weatherState.windAngle);
+  weatherState.windZ = Math.sin(weatherState.windAngle);
+
+  weatherState.lightning = Math.max(0, weatherState.lightning - delta * (3.8 + weatherState.lightning * 3.2));
+  weatherState.lightningCooldown = Math.max(0, weatherState.lightningCooldown - delta);
+  if (weatherState.lightningRate > 0.02 && weatherState.lightningCooldown <= 0) {
+    const chancePerSecond = weatherState.lightningRate * (0.32 + weatherState.cloudiness * 0.78);
+    if (Math.random() < chancePerSecond * delta) {
+      weatherState.lightning = 1;
+      weatherState.lightningCooldown = 2.4 + Math.random() * 5.2;
+      if (weatherState.lightningLight) {
+        const angle = Math.random() * Math.PI * 2;
+        const distance = 45 + Math.random() * 85;
+        weatherState.lightningLight.position.set(
+          camera.position.x + Math.cos(angle) * distance,
+          WORLD_HEIGHT + 36 + Math.random() * 42,
+          camera.position.z + Math.sin(angle) * distance
+        );
+      }
+    }
+  }
+  if (weatherState.lightningLight) {
+    weatherState.lightningLight.intensity = weatherState.lightning * WEATHER_LIGHTNING_INTENSITY * (0.45 + (1 - daylight) * 0.72);
+  }
+
+  const displayType = weatherState.transitionDuration > 0 && blend < 0.55
+    ? weatherState.currentType
+    : weatherState.targetType;
+  weatherState.displayName = WEATHER_NAMES[displayType];
+
+  updateWeatherParticles(delta, daylight);
+  return weatherState;
+}
+
+function updateCloudLayer(delta, daylight, weather = weatherState) {
   if (cloudLayers.length === 0) return;
 
-  cloudDrift += delta * CLOUD_DRIFT_SPEED;
-  const driftX = cloudDrift * 4.2;
-  const driftZ = cloudDrift * 2.1;
-  const counts = Array.from({ length: CLOUD_VARIANT_COUNT }, () => 0);
+  const windStrength = weather?.windStrength ?? 0.34;
+  const cloudiness = weather?.cloudiness ?? 0;
+  const windX = weather?.windX ?? 1;
+  const windZ = weather?.windZ ?? 0.5;
+  cloudDrift += delta * CLOUD_DRIFT_SPEED * (0.74 + windStrength * 1.34);
+  const driftX = cloudDrift * 4.2 * windX;
+  const driftZ = cloudDrift * 2.1 * windZ;
+  cloudVariantCounts.fill(0);
+  const counts = cloudVariantCounts;
 
   for (let i = 0; i < cloudSeeds.length; i += 1) {
     const seed = cloudSeeds[i];
@@ -1426,12 +2039,18 @@ function updateCloudLayer(delta, daylight) {
 
     if (layer.material instanceof THREE.MeshLambertMaterial) {
       const variantOpacity = variant === 1 ? 0.84 : variant === 2 ? 0.92 : 1.0;
-      layer.material.opacity = (0.06 + daylight * 0.58) * variantOpacity;
+      const baseOpacity = 0.06 + daylight * 0.58;
+      layer.material.opacity = THREE.MathUtils.clamp(
+        baseOpacity * (1 + cloudiness * 1.28) * variantOpacity,
+        0.05,
+        0.97
+      );
       const tint = variant === 1 ? 0.96 : variant === 2 ? 0.92 : 1.0;
+      const weatherDarken = 1 - cloudiness * 0.42;
       layer.material.color.setRGB(
-        (0.4 + daylight * 0.58) * tint,
-        (0.44 + daylight * 0.54) * tint,
-        (0.52 + daylight * 0.46) * tint
+        (0.4 + daylight * 0.58) * tint * weatherDarken,
+        (0.44 + daylight * 0.54) * tint * weatherDarken,
+        (0.52 + daylight * 0.46) * tint * weatherDarken
       );
     }
   }
@@ -1441,11 +2060,13 @@ function setupAtmosphere() {
   createSkyDome();
   createStarField();
   createCelestialSprites();
+  createWeatherSystem();
   createPlayerTorch();
   createPlayerGun();
   createCombatEffects();
   createCloudLayer();
   initializeCloudSeeds();
+  resetWeatherState();
 }
 
 function chunkKey(cx, cz) {
@@ -5452,12 +6073,14 @@ function buildWater() {
     uDaylight: { value: 1 },
     uDeepColor: { value: new THREE.Color(0x13345f) },
     uShallowColor: { value: new THREE.Color(0x62a8df) },
+    uRainStrength: { value: 0 },
   };
 
   const material = new THREE.ShaderMaterial({
     uniforms: waterUniforms,
     vertexShader: `
       uniform float uTime;
+      uniform float uRainStrength;
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
       varying float vWave;
@@ -5467,6 +6090,8 @@ function buildWater() {
         float wave = sin((p.x + t * 5.8) * 0.035) * 0.11;
         wave += cos((p.y - t * 4.2) * 0.041) * 0.08;
         wave += sin((p.x + p.y + t * 2.4) * 0.028) * 0.06;
+        wave += sin((p.x * 0.22 + p.y * 0.18 + t * 11.6)) * (0.015 + uRainStrength * 0.08);
+        wave += cos((p.x * 0.17 - p.y * 0.26 - t * 9.8)) * uRainStrength * 0.055;
         return wave;
       }
 
@@ -5494,6 +6119,7 @@ function buildWater() {
     `,
     fragmentShader: `
       uniform float uDaylight;
+      uniform float uRainStrength;
       uniform vec3 uDeepColor;
       uniform vec3 uShallowColor;
       varying vec3 vWorldPos;
@@ -5510,7 +6136,9 @@ function buildWater() {
         vec3 deep = mix(uDeepColor * 0.45, uDeepColor, uDaylight);
         vec3 shallow = mix(uShallowColor * 0.42, uShallowColor, uDaylight);
         vec3 color = mix(deep, shallow, clamp(0.22 + fresnel * 0.92 + ripple * 0.06, 0.0, 1.0));
+        color = mix(color, color * vec3(0.76, 0.84, 0.95), clamp(uRainStrength * 0.4, 0.0, 1.0));
         float alpha = clamp(mix(0.2, 0.34, uDaylight) + fresnel * 0.18, 0.16, 0.62);
+        alpha = clamp(alpha + uRainStrength * 0.08, 0.16, 0.74);
 
         gl_FragColor = vec4(color, alpha);
         #include <fog_fragment>
@@ -5707,7 +6335,7 @@ function updateHud() {
   setText(hudShotsValue, shotsFired.toLocaleString());
   setText(hudAccuracyValue, `${accuracy.toFixed(1)}%`);
   setText(hudDistanceValue, `${playerDistanceTraveled.toFixed(1)} m`);
-  setText(hudTimeValue, `${daylightLabel} ${(daylight * 100).toFixed(0)}%`);
+  setText(hudTimeValue, `${daylightLabel} ${(daylight * 100).toFixed(0)}% • ${weatherState.displayName}`);
   setText(hudBlocksValue, totalSolidBlocks.toLocaleString());
   setText(hudFacesValue, totalVisibleFaces.toLocaleString());
   setText(hudDecorValue, totalTrees.toLocaleString());
@@ -5722,6 +6350,7 @@ function updateHud() {
       `${statusText} | Seed ${worldSeed} | Chunk ${cx},${cz} | Biome ${biomeName} | ` +
       `Loaded ${activeChunks.size} | GenQ ${chunkLoadQueue.length} | MeshQ ${chunkMeshQueue.length} | ` +
       `Zombies ${zombies.length} | Kills ${zombieKills} | Shots ${shotsFired} | Accuracy ${accuracy.toFixed(1)}% | ` +
+      `Time ${daylightLabel} ${(daylight * 100).toFixed(0)}% | Weather ${weatherState.displayName} | ` +
       `Decor ${totalTrees.toLocaleString()} | Ores ${totalOreBlocks.toLocaleString()} | ` +
       `Blocks ${totalSolidBlocks.toLocaleString()} | Faces ${totalVisibleFaces.toLocaleString()}`;
   }
@@ -5781,6 +6410,7 @@ function regenerate(useNewSeed = true, resetToSpawn = false) {
   playerVelocityY = 0;
   playerGrounded = false;
   lastPlayerPos.copy(camera.position);
+  resetWeatherState();
   updateHud();
 }
 
@@ -6977,19 +7607,23 @@ function updateLighting(delta) {
   const duskDawn = 1 - Math.abs(daylight * 2 - 1);
   const nightStrength = THREE.MathUtils.clamp(1 - daylight, 0, 1);
   const moonGlow = Math.pow(nightStrength, 1.38);
+  const weather = updateWeatherSystem(delta, daylight);
+  const sunCloudFilter = 1 - weather.cloudiness * 0.54;
+  const moonCloudFilter = 1 - weather.cloudiness * 0.36;
+  const fillCloudFilter = 1 - weather.cloudiness * 0.24;
 
   sun.position.set(Math.cos(dayPhase) * 92, 12 + sunArc * 78, Math.sin(dayPhase * 0.78) * 64);
   sun.color.copy(SUN_LIGHT_SUNSET).lerp(SUN_LIGHT_DAY, daylight);
-  sun.intensity = 0.08 + daylight * 1.22;
+  sun.intensity = (0.08 + daylight * 1.22) * sunCloudFilter;
 
   moon.position.copy(sun.position).multiplyScalar(-1);
   moon.color.copy(MOON_LIGHT_COLOR);
-  moon.intensity = 0.06 + (1 - daylight) * 0.36;
+  moon.intensity = (0.06 + (1 - daylight) * 0.36) * moonCloudFilter;
 
-  fillLight.intensity = 0.24 + daylight * 0.62;
+  fillLight.intensity = (0.24 + daylight * 0.62) * fillCloudFilter;
   fillLight.color.copy(HEMI_SKY_NIGHT).lerp(HEMI_SKY_DAY, daylight);
   fillLight.groundColor.copy(HEMI_GROUND_NIGHT).lerp(HEMI_GROUND_DAY, daylight);
-  moonBounceLight.intensity = moonGlow * 0.08 + duskDawn * 0.008;
+  moonBounceLight.intensity = (moonGlow * 0.08 + duskDawn * 0.008) * moonCloudFilter;
   moonBounceLight.color.copy(MOON_BOUNCE_SKY);
   moonBounceLight.groundColor.copy(MOON_BOUNCE_GROUND);
 
@@ -6999,13 +7633,46 @@ function updateLighting(delta) {
       material.emissive.setRGB(0, 0, 0);
     }
   }
-  renderer.toneMappingExposure = 0.9 + daylight * 0.23 + duskDawn * 0.06;
+  const rainWetness = THREE.MathUtils.clamp(weather.rain + weather.cloudiness * 0.18, 0, 1);
+  const snowCover = THREE.MathUtils.clamp(weather.snow, 0, 1);
+  terrainMaterial.roughness = THREE.MathUtils.clamp(0.9 - rainWetness * 0.24 + snowCover * 0.07, 0.56, 0.97);
+  terrainMaterial.metalness = THREE.MathUtils.clamp(0.03 + rainWetness * 0.07 - snowCover * 0.015, 0.01, 0.14);
+  chunkWaterMaterial.opacity = THREE.MathUtils.clamp(0.73 + weather.rain * 0.12 + weather.fog * 0.06, 0.68, 0.91);
+  chunkWaterMaterial.roughness = THREE.MathUtils.clamp(0.16 - weather.rain * 0.08 + weather.snow * 0.05, 0.06, 0.3);
+  renderer.toneMappingExposure =
+    (0.9 + daylight * 0.23 + duskDawn * 0.06) * (1 - weather.skyDarken * 0.24 - weather.fog * 0.08) +
+    weather.lightning * 0.18;
 
   skyScratch.copy(NIGHT_SKY).lerp(SUNSET_SKY, duskDawn * 0.68).lerp(DAY_SKY, daylight);
+  skyScratch.lerp(WEATHER_SKY_OVERCAST, weather.cloudiness * 0.58 + weather.skyDarken * 0.32);
+  if (weather.fog > 0.26 && weather.rain < 0.22 && weather.snow < 0.22) {
+    skyScratch.lerp(WEATHER_FOG_TINT, weather.fog * 0.36);
+  } else if (weather.rain > weather.snow) {
+    skyScratch.lerp(WEATHER_RAIN_TINT, weather.rain * 0.22);
+  } else if (weather.snow > 0.01) {
+    skyScratch.lerp(WEATHER_SNOW_TINT, weather.snow * 0.22);
+  }
+  if (weather.lightning > 0.01) {
+    skyScratch.lerp(WEATHER_LIGHTNING_TINT, weather.lightning * 0.55);
+  }
   scene.background.copy(skyScratch);
 
   fogScratch.copy(NIGHT_FOG).lerp(DAY_FOG, daylight);
+  fogScratch.lerp(WEATHER_FOG_OVERCAST, weather.fog);
+  if (weather.fog > 0.2) {
+    fogScratch.lerp(WEATHER_FOG_TINT, weather.fog * 0.38);
+  }
+  if (weather.snow > 0.05) {
+    fogScratch.lerp(WEATHER_SNOW_TINT, weather.snow * 0.2);
+  }
+  if (weather.lightning > 0.01) {
+    fogScratch.lerp(WEATHER_LIGHTNING_TINT, weather.lightning * 0.42);
+  }
   scene.fog.color.copy(fogScratch);
+  const dynamicFogNear = FOG_NEAR_DISTANCE * (1 - weather.fog * 0.23);
+  const dynamicFogFar = FOG_FAR_DISTANCE * (1 - weather.fog * 0.4);
+  scene.fog.near = Math.max(CHUNK_SIZE_X, dynamicFogNear);
+  scene.fog.far = Math.max(scene.fog.near + CHUNK_SIZE_X * 0.7, dynamicFogFar);
 
   if (skyDome && skyUniforms) {
     skyDome.position.copy(camera.position);
@@ -7013,13 +7680,13 @@ function updateLighting(delta) {
     moonDirScratch.copy(moon.position).normalize();
     skyUniforms.sunDirection.value.copy(sunDirScratch);
     skyUniforms.moonDirection.value.copy(moonDirScratch);
-    skyUniforms.nightStrength.value = nightStrength;
+    skyUniforms.nightStrength.value = THREE.MathUtils.clamp(nightStrength + weather.cloudiness * 0.08, 0, 1);
     skyUniforms.time.value += delta;
     skyUniforms.topColor.value.copy(SKY_TOP_NIGHT).lerp(SKY_TOP_SUNSET, duskDawn * 0.72).lerp(SKY_TOP_DAY, daylight);
     skyUniforms.horizonColor.value.copy(SKY_HORIZON_NIGHT).lerp(SKY_HORIZON_SUNSET, duskDawn * 0.78).lerp(SKY_HORIZON_DAY, daylight);
     skyUniforms.bottomColor.value.copy(SKY_BOTTOM_NIGHT).lerp(SKY_BOTTOM_SUNSET, duskDawn * 0.7).lerp(SKY_BOTTOM_DAY, daylight);
     skyUniforms.sunColor.value.copy(SKY_SUN_GLOW_SUNSET).lerp(SKY_SUN_GLOW_DAY, daylight);
-    skyUniforms.sunGlowPower.value = 50 + (1 - daylight) * 42 - duskDawn * 16;
+    skyUniforms.sunGlowPower.value = 50 + (1 - daylight) * 42 - duskDawn * 16 + weather.cloudiness * 36;
   }
 
   if (starField && starMaterial) {
@@ -7027,7 +7694,7 @@ function updateLighting(delta) {
     starField.rotation.y += delta * 0.0046;
     starField.rotation.z = Math.sin(dayPhase * 0.23) * 0.045;
     const starVisibility = THREE.MathUtils.clamp(
-      Math.pow(1 - daylight, 1.12) * (0.76 + nightStrength * 0.42),
+      Math.pow(1 - daylight, 1.12) * (0.76 + nightStrength * 0.42) * (1 - weather.cloudiness * 0.9) * (1 - weather.fog * 0.85),
       0,
       1
     );
@@ -7039,7 +7706,7 @@ function updateLighting(delta) {
   if (sunSprite && sunSprite.material instanceof THREE.SpriteMaterial) {
     sunDirScratch.copy(sun.position).normalize();
     sunSprite.position.copy(camera.position).addScaledVector(sunDirScratch, SKY_DOME_RADIUS * 0.82);
-    sunSprite.material.opacity = THREE.MathUtils.clamp(daylight * 1.2 + duskDawn * 0.25, 0, 1);
+    sunSprite.material.opacity = THREE.MathUtils.clamp((daylight * 1.2 + duskDawn * 0.25) * (1 - weather.cloudiness * 0.76), 0, 1);
     sunSprite.scale.setScalar(34 + daylight * 30 + duskDawn * 8);
   }
 
@@ -7047,17 +7714,20 @@ function updateLighting(delta) {
     moonDirScratch.copy(moon.position).normalize();
     moonSprite.position.copy(camera.position).addScaledVector(moonDirScratch, SKY_DOME_RADIUS * 0.82);
     const moonPulse = 0.93 + Math.sin(dayPhase * 0.41) * 0.08;
-    moonSprite.material.opacity = THREE.MathUtils.clamp((1 - daylight) * 1.15 + duskDawn * 0.08, 0, 1) * moonPulse;
+    moonSprite.material.opacity =
+      THREE.MathUtils.clamp(((1 - daylight) * 1.15 + duskDawn * 0.08) * (1 - weather.cloudiness * 0.64), 0, 1) *
+      moonPulse;
     moonSprite.scale.setScalar(26 + (1 - daylight) * 19 + Math.sin(dayPhase * 0.27) * 2.6);
   }
 
   if (waterUniforms) {
     waterUniforms.uTime.value += delta;
     waterUniforms.uDaylight.value = daylight;
+    waterUniforms.uRainStrength.value = weather.rain;
   }
 
   updatePlayerTorch(delta, daylight);
-  updateCloudLayer(delta, daylight);
+  updateCloudLayer(delta, daylight, weather);
   return daylight;
 }
 
