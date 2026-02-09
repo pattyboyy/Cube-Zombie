@@ -30,7 +30,7 @@ const FOG_NEAR_DISTANCE = Math.max(
 const MIN_TERRAIN_HEIGHT = 4;
 const MAX_TERRAIN_HEIGHT = 44;
 const SEA_LEVEL = 12;
-const LAKE_BOTTOM_LEVEL = SEA_LEVEL - 5;
+const LAKE_BOTTOM_LEVEL = SEA_LEVEL - 8;
 
 const PLAYER_WALK_SPEED = 7.2;
 const PLAYER_SPRINT_MULTIPLIER = 1.55;
@@ -3125,6 +3125,29 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     tundraW * 0.8 +
     oasisW * 1.1;
   const lakeDepth = Math.pow(lakeMask, 1.24) * lakeDepthScale;
+  const lakeDeepCoreMask = lakeMask * THREE.MathUtils.smoothstep(lakeDetail, 0.74, 0.95);
+  const lakeDeepCoreAllowance = THREE.MathUtils.clamp(
+    plainsW * 1.02 +
+      forestW * 0.94 +
+      jungleW * 0.78 +
+      redwoodW * 0.72 +
+      heathW * 0.54 +
+      steppeW * 0.42 +
+      savannaW * 0.38 +
+      cherryW * 0.42 +
+      tundraW * 0.28 -
+      swampW * 0.3 -
+      mangroveW * 0.48 -
+      oasisW * 0.52 -
+      desertW * 0.24 -
+      mesaW * 0.26 -
+      badlandsW * 0.3 -
+      volcanicW * 0.35 -
+      alpineW * 0.18 -
+      glacierW * 0.22,
+    0,
+    1
+  );
   const terrainBaseHeight = lerp(biomeMin, biomeMax, shaped) + spireBonus - riverDepth;
   const lakeDepthCap = Math.max(0, terrainBaseHeight - LAKE_BOTTOM_LEVEL);
   const lakeCarve = Math.min(lakeDepth, lakeDepthCap);
@@ -3150,6 +3173,18 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
   }
   if (biome === BIOME.GLACIER || glacierW > 0.54) {
     terrainHeight = Math.max(terrainHeight, SEA_LEVEL + 7);
+  }
+  if (terrainHeight <= SEA_LEVEL - 1) {
+    const deepCoreDepth =
+      Math.pow(lakeDeepCoreMask * lakeDeepCoreAllowance, 1.08) *
+      (1.8 + plainsW * 3.8 + forestW * 3.1 + jungleW * 2.8 + redwoodW * 2.2 + heathW * 1.9 + steppeW * 1.4 + savannaW * 1.2);
+    const deepCoreFloor = LAKE_BOTTOM_LEVEL - 4;
+    if (deepCoreDepth > 0.08) {
+      terrainHeight = Math.min(
+        terrainHeight - Math.floor(deepCoreDepth),
+        Math.floor(THREE.MathUtils.lerp(LAKE_BOTTOM_LEVEL, deepCoreFloor, lakeDeepCoreMask))
+      );
+    }
   }
 
   return THREE.MathUtils.clamp(terrainHeight, 4, WORLD_HEIGHT - 2);
