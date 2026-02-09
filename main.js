@@ -10,6 +10,9 @@ const MAX_CHUNK_LOADS_PER_FRAME = 1;
 const MAX_CHUNK_MESHES_PER_FRAME = 1;
 const CHUNK_LOAD_BUDGET_MS = 5;
 const CHUNK_MESH_BUDGET_MS = 5;
+const CHUNK_PREFETCH_EDGE_THRESHOLD = 0.64;
+const CHUNK_PREFETCH_INTERVAL = 0.12;
+const CHUNK_PREFETCH_MIN_MOVE = 0.012;
 const WATER_PLANE_SIZE = CHUNK_SIZE_X * (UNLOAD_RADIUS * 2 + 8);
 const FOG_HIDDEN_MARGIN_CHUNKS = 1.25;
 const FOG_RAMP_WIDTH_CHUNKS = 2.0;
@@ -332,6 +335,11 @@ let playerDamageTaken = 0;
 let runStartTimeMs = performance.now();
 let cameraChunkX = Number.NaN;
 let cameraChunkZ = Number.NaN;
+let streamPrevX = Number.NaN;
+let streamPrevZ = Number.NaN;
+let prefetchCooldown = 0;
+let prefetchTargetCx = Number.NaN;
+let prefetchTargetCz = Number.NaN;
 let skyDome = null;
 let sunSprite = null;
 let moonSprite = null;
@@ -5258,6 +5266,76 @@ function enqueueChunk(cx, cz, distanceSq) {
   chunkLoadQueue.push({ cx, cz, distanceSq, key });
 }
 
+function enqueuePrefetchAhead(centerCx, centerCz, targetCx, targetCz) {
+  if (targetCx === centerCx && targetCz === centerCz) return;
+
+  const loadRadiusSq = LOAD_RADIUS * LOAD_RADIUS;
+  const unloadRadiusSq = UNLOAD_RADIUS * UNLOAD_RADIUS;
+  let enqueued = 0;
+
+  for (let dz = -LOAD_RADIUS; dz <= LOAD_RADIUS; dz += 1) {
+    for (let dx = -LOAD_RADIUS; dx <= LOAD_RADIUS; dx += 1) {
+      const distToTargetSq = dx * dx + dz * dz;
+      if (distToTargetSq > loadRadiusSq) continue;
+
+      const cx = targetCx + dx;
+      const cz = targetCz + dz;
+      const currentDx = cx - centerCx;
+      const currentDz = cz - centerCz;
+      const distToCurrentSq = currentDx * currentDx + currentDz * currentDz;
+      if (distToCurrentSq <= loadRadiusSq || distToCurrentSq > unloadRadiusSq) continue;
+
+      enqueueChunk(cx, cz, distToTargetSq);
+      enqueued += 1;
+    }
+  }
+
+  if (enqueued > 0) {
+    chunkLoadQueue.sort((a, b) => a.distanceSq - b.distanceSq);
+  }
+}
+
+function maybePrefetchChunks(centerCx, centerCz, delta) {
+  if (!Number.isFinite(streamPrevX) || !Number.isFinite(streamPrevZ)) {
+    streamPrevX = camera.position.x;
+    streamPrevZ = camera.position.z;
+    return;
+  }
+
+  const moveX = camera.position.x - streamPrevX;
+  const moveZ = camera.position.z - streamPrevZ;
+  streamPrevX = camera.position.x;
+  streamPrevZ = camera.position.z;
+
+  prefetchCooldown = Math.max(0, prefetchCooldown - delta);
+  if (prefetchCooldown > 0) return;
+
+  const moveSq = moveX * moveX + moveZ * moveZ;
+  if (moveSq < CHUNK_PREFETCH_MIN_MOVE * CHUNK_PREFETCH_MIN_MOVE) return;
+
+  const localX = camera.position.x / CHUNK_SIZE_X - centerCx;
+  const localZ = camera.position.z / CHUNK_SIZE_Z - centerCz;
+  let shiftX = 0;
+  let shiftZ = 0;
+
+  if (moveX > 0 && localX >= CHUNK_PREFETCH_EDGE_THRESHOLD) shiftX = 1;
+  else if (moveX < 0 && localX <= 1 - CHUNK_PREFETCH_EDGE_THRESHOLD) shiftX = -1;
+
+  if (moveZ > 0 && localZ >= CHUNK_PREFETCH_EDGE_THRESHOLD) shiftZ = 1;
+  else if (moveZ < 0 && localZ <= 1 - CHUNK_PREFETCH_EDGE_THRESHOLD) shiftZ = -1;
+
+  if (shiftX === 0 && shiftZ === 0) return;
+
+  const targetCx = centerCx + shiftX;
+  const targetCz = centerCz + shiftZ;
+  if (targetCx === prefetchTargetCx && targetCz === prefetchTargetCz) return;
+
+  prefetchTargetCx = targetCx;
+  prefetchTargetCz = targetCz;
+  prefetchCooldown = CHUNK_PREFETCH_INTERVAL;
+  enqueuePrefetchAhead(centerCx, centerCz, targetCx, targetCz);
+}
+
 function refreshChunkTargets(centerCx, centerCz) {
   const keepSet = new Set();
   const unloadRadiusSq = UNLOAD_RADIUS * UNLOAD_RADIUS;
@@ -5297,6 +5375,8 @@ function refreshChunkTargets(centerCx, centerCz) {
   }
 
   chunkLoadQueue.sort((a, b) => a.distanceSq - b.distanceSq);
+  prefetchTargetCx = Number.NaN;
+  prefetchTargetCz = Number.NaN;
 }
 
 function processChunkQueue(
@@ -5674,6 +5754,11 @@ function regenerate(useNewSeed = true, resetToSpawn = false) {
   playerDistanceTraveled = 0;
   playerDamageTaken = 0;
   runStartTimeMs = performance.now();
+  streamPrevX = camera.position.x;
+  streamPrevZ = camera.position.z;
+  prefetchCooldown = 0;
+  prefetchTargetCx = Number.NaN;
+  prefetchTargetCz = Number.NaN;
   hideDeathScreen();
   updateHealthUi();
 
@@ -6970,7 +7055,7 @@ function updateLighting(delta) {
   return daylight;
 }
 
-function updateStreaming() {
+function updateStreaming(delta) {
   const newChunkX = worldToChunkCoord(camera.position.x, CHUNK_SIZE_X);
   const newChunkZ = worldToChunkCoord(camera.position.z, CHUNK_SIZE_Z);
 
@@ -6980,6 +7065,7 @@ function updateStreaming() {
     refreshChunkTargets(cameraChunkX, cameraChunkZ);
   }
 
+  maybePrefetchChunks(cameraChunkX, cameraChunkZ, delta);
   processChunkQueue(cameraChunkX, cameraChunkZ);
   processChunkMeshQueue();
   updateWaterPosition();
@@ -6989,7 +7075,7 @@ function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
   updatePlayerCombatState(delta);
   updateMovement(delta);
-  updateStreaming();
+  updateStreaming(delta);
   const daylight = updateLighting(delta);
   updatePlayerGun(delta);
   updateProjectiles(delta);
