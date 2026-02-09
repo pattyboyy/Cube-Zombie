@@ -30,12 +30,15 @@ const FOG_NEAR_DISTANCE = Math.max(
 const MIN_TERRAIN_HEIGHT = 4;
 const MAX_TERRAIN_HEIGHT = 44;
 const SEA_LEVEL = 12;
+const LAKE_BOTTOM_LEVEL = SEA_LEVEL - 5;
 
 const PLAYER_WALK_SPEED = 7.2;
 const PLAYER_SPRINT_MULTIPLIER = 1.55;
 const PLAYER_GRAVITY = 28;
 const PLAYER_JUMP_VELOCITY = 9.2;
 const PLAYER_TERMINAL_VELOCITY = 35;
+const GODMODE_FLY_SPEED = 24;
+const GODMODE_FLY_BOOST_MULTIPLIER = 2.3;
 const PLAYER_HEIGHT = 1.78;
 const PLAYER_EYE_HEIGHT = 1.62;
 const PLAYER_RADIUS = 0.34;
@@ -386,6 +389,7 @@ let playerDamageCooldown = 0;
 let playerDamageFlash = 0;
 let playerDistanceTraveled = 0;
 let playerDamageTaken = 0;
+let godModeEnabled = false;
 let runStartTimeMs = performance.now();
 let cameraChunkX = Number.NaN;
 let cameraChunkZ = Number.NaN;
@@ -2905,6 +2909,8 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     0.34,
     0.82
   );
+  const lakeMacro = fbm2D(sampleX * 0.0056 + 380, sampleZ * 0.0056 - 540, 4) * 0.5 + 0.5;
+  const lakeDetail = fbm2D(sampleX * 0.018 + 95, sampleZ * 0.018 - 120, 2) * 0.5 + 0.5;
 
   const reliefWeight =
     glacierW * 0.66 +
@@ -3062,7 +3068,57 @@ function getTerrainHeight(worldX, worldZ, biome, riverIntensity = 0, biomeBlend 
     spireSuppression;
   const spireBonus = Math.floor(spireMask * spireScale);
 
-  let terrainHeight = Math.floor(lerp(biomeMin, biomeMax, shaped) + spireBonus - riverDepth);
+  const lakeBiomeAllowance = THREE.MathUtils.clamp(
+    plainsW * 1.08 +
+      forestW * 0.96 +
+      jungleW * 0.82 +
+      swampW * 0.92 +
+      mangroveW * 0.94 +
+      redwoodW * 0.72 +
+      cherryW * 0.6 +
+      heathW * 0.56 +
+      steppeW * 0.46 +
+      savannaW * 0.42 +
+      oasisW * 0.4 +
+      tundraW * 0.26 -
+      desertW * 0.34 -
+      badlandsW * 0.5 -
+      mesaW * 0.62 -
+      volcanicW * 0.66 -
+      alpineW * 0.48 -
+      glacierW * 0.62,
+    0,
+    1
+  );
+  const lakeRegion = THREE.MathUtils.smoothstep(lakeMacro, 0.66, 0.9);
+  const lakePocket = THREE.MathUtils.smoothstep(lakeDetail, 0.6, 0.9);
+  const lakeFlatness = THREE.MathUtils.smoothstep(1 - ridgeBand, 0.22, 0.88);
+  const lakeInland = THREE.MathUtils.smoothstep(macroContinents, 0.32, 0.86);
+  const lakeSuppression = 1 - THREE.MathUtils.clamp(
+    mountainRegion * 0.76 + ridgeBand * 0.42 + Math.max(0, reliefWeight) * 0.26,
+    0,
+    0.95
+  );
+  const lakeMask = lakeRegion * lakePocket * lakeFlatness * lakeInland * lakeBiomeAllowance * lakeSuppression;
+  const lakeDepthScale =
+    2.8 +
+    plainsW * 4.8 +
+    forestW * 3.7 +
+    redwoodW * 3.3 +
+    jungleW * 2.8 +
+    swampW * 2.4 +
+    mangroveW * 2.2 +
+    cherryW * 1.9 +
+    heathW * 1.7 +
+    savannaW * 1.4 +
+    steppeW * 1.3 +
+    tundraW * 0.8 +
+    oasisW * 1.1;
+  const lakeDepth = Math.pow(lakeMask, 1.24) * lakeDepthScale;
+  const terrainBaseHeight = lerp(biomeMin, biomeMax, shaped) + spireBonus - riverDepth;
+  const lakeDepthCap = Math.max(0, terrainBaseHeight - LAKE_BOTTOM_LEVEL);
+  const lakeCarve = Math.min(lakeDepth, lakeDepthCap);
+  let terrainHeight = Math.floor(terrainBaseHeight - lakeCarve);
 
   if (biome === BIOME.SWAMP || swampW > 0.56) {
     terrainHeight = THREE.MathUtils.clamp(terrainHeight, SEA_LEVEL - 1, SEA_LEVEL + 7);
@@ -4468,7 +4524,18 @@ function generateChunkData(cx, cz) {
   }
 
   applyCliffFacesToChunk(data, columnHeights, columnBiomes, cx, cz);
-  // Water generation removed.
+  for (let lx = 0; lx < CHUNK_SIZE_X; lx += 1) {
+    for (let lz = 0; lz < CHUNK_SIZE_Z; lz += 1) {
+      const topY = columnHeights[chunkColumnIndex(lx, lz)];
+      if (topY >= SEA_LEVEL) continue;
+      const startY = Math.max(1, topY + 1);
+      for (let y = startY; y <= SEA_LEVEL; y += 1) {
+        if (getLocalBlock(data, lx, y, lz) === BLOCK.AIR) {
+          setLocalBlock(data, lx, y, lz, BLOCK.WATER);
+        }
+      }
+    }
+  }
 
   for (let lx = 0; lx < CHUNK_SIZE_X; lx += 1) {
     for (let lz = 0; lz < CHUNK_SIZE_Z; lz += 1) {
@@ -6519,6 +6586,7 @@ function triggerPlayerDeath() {
 }
 
 function damagePlayer(amount) {
+  if (godModeEnabled) return;
   if (playerDead || amount <= 0) return;
   if (playerDamageCooldown > 0) return;
 
@@ -6552,7 +6620,8 @@ function updatePlayerCombatState(delta) {
 }
 
 function updateHud() {
-  const lockState = playerDead ? "Eliminated" : controls.isLocked ? "Engaged" : "Click to play";
+  const baseLockState = playerDead ? "Eliminated" : controls.isLocked ? "Engaged" : "Click to play";
+  const lockState = godModeEnabled ? `${baseLockState} | Godmode` : baseLockState;
   const statusText = hudErrorMessage || lockState;
   const statusState = hudErrorMessage
     ? "error"
@@ -7739,6 +7808,45 @@ function updateMovement(delta) {
   const sprinting = pressedKeys.has("ShiftLeft") || pressedKeys.has("ShiftRight");
   const wantsJump = pressedKeys.has("Space");
 
+  if (godModeEnabled) {
+    const descendInput =
+      pressedKeys.has("ControlLeft") ||
+      pressedKeys.has("ControlRight") ||
+      pressedKeys.has("KeyC");
+    const ascendInput = (wantsJump ? 1 : 0) - (descendInput ? 1 : 0);
+    jumpHeldLastFrame = wantsJump;
+
+    camera.getWorldDirection(moveForwardScratch);
+    if (moveForwardScratch.lengthSq() < 1e-6) {
+      moveForwardScratch.set(0, 0, -1);
+    } else {
+      moveForwardScratch.normalize();
+    }
+    moveRightScratch.crossVectors(moveForwardScratch, upAxis);
+    if (moveRightScratch.lengthSq() < 1e-6) {
+      moveRightScratch.set(1, 0, 0);
+    } else {
+      moveRightScratch.normalize();
+    }
+
+    moveIntentScratch
+      .set(0, 0, 0)
+      .addScaledVector(moveForwardScratch, forwardInput)
+      .addScaledVector(moveRightScratch, strafeInput)
+      .addScaledVector(upAxis, ascendInput);
+
+    if (moveIntentScratch.lengthSq() > 1e-6) {
+      moveIntentScratch.normalize();
+      const speed = GODMODE_FLY_SPEED * (sprinting ? GODMODE_FLY_BOOST_MULTIPLIER : 1);
+      camera.position.addScaledVector(moveIntentScratch, speed * delta);
+    }
+
+    playerVelocityY = 0;
+    playerGrounded = false;
+    camera.position.y = THREE.MathUtils.clamp(camera.position.y, 1, WORLD_HEIGHT + 220);
+    return;
+  }
+
   if (wantsJump && !jumpHeldLastFrame && playerGrounded) {
     playerVelocityY = PLAYER_JUMP_VELOCITY;
     playerGrounded = false;
@@ -8069,6 +8177,23 @@ window.addEventListener("keydown", (event) => {
 
   if (event.code === "KeyT") {
     regenerate(false);
+    return;
+  }
+
+  if (event.code === "KeyG") {
+    if (event.repeat) return;
+    godModeEnabled = !godModeEnabled;
+    if (!godModeEnabled) {
+      while (collidesPlayerAt(camera.position.x, camera.position.y, camera.position.z)) {
+        camera.position.y += 0.5;
+        if (camera.position.y > WORLD_HEIGHT + 120) break;
+      }
+    }
+    playerVelocityY = 0;
+    playerGrounded = false;
+    jumpHeldLastFrame = false;
+    updateHud();
+    event.preventDefault();
     return;
   }
 
