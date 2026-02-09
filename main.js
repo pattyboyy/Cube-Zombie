@@ -610,62 +610,8 @@ configureTerrainDetail(terrainMaterial);
 const floraMaterials = createFloraMaterials();
 
 function configureTerrainDetail(material) {
-  material.customProgramCacheKey = () => "terrain-detail-v3-stylized";
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "void main() {",
-        `
-      varying vec3 vDetailWorldPos;
-      void main() {
-      `
-      )
-      .replace(
-        "#include <begin_vertex>",
-        `
-      #include <begin_vertex>
-      vec4 detailWorldPos = modelMatrix * vec4(transformed, 1.0);
-      vDetailWorldPos = detailWorldPos.xyz;
-      `
-      );
-
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "void main() {",
-        `
-      varying vec3 vDetailWorldPos;
-
-      float terrainDetailHash(vec2 p) {
-        return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-      }
-
-      void main() {
-      `
-      )
-      .replace(
-        "#include <color_fragment>",
-        `
-      #include <color_fragment>
-      vec2 pixelCell = floor(vDetailWorldPos.xz * 2.0);
-      float grainA = terrainDetailHash(pixelCell);
-      float grainB = terrainDetailHash(pixelCell + floor(vDetailWorldPos.yy * 1.7));
-      float grain = floor((grainA * 0.65 + grainB * 0.35) * 4.0) * 0.25;
-      float strata = floor(fract(vDetailWorldPos.y * 0.48 + grainA * 0.37) * 3.0) / 3.0;
-      float checker = mod(pixelCell.x + pixelCell.y + floor(vDetailWorldPos.y * 0.5), 2.0);
-      float detail = 0.78 + grain * 0.18 + strata * 0.07 + checker * 0.04;
-      detail = floor(detail * 5.0) / 5.0;
-      vec3 stylized = diffuseColor.rgb * clamp(detail, 0.62, 1.14);
-      vec3 warmTint = vec3(1.08, 1.03, 0.95);
-      vec3 coolTint = vec3(0.92, 0.98, 1.08);
-      float tintMix = floor(grainA * 3.0) * 0.5;
-      stylized *= mix(coolTint, warmTint, tintMix);
-      float contour = step(0.78, fract(vDetailWorldPos.y * 0.42 + grainB * 0.35));
-      stylized *= 1.0 - contour * 0.2;
-      stylized = floor(stylized * 6.0) / 6.0;
-      diffuseColor.rgb = clamp(stylized, 0.0, 1.0);
-      `
-      );
-  };
+  material.customProgramCacheKey = undefined;
+  material.onBeforeCompile = null;
   material.needsUpdate = true;
 }
 
@@ -913,7 +859,6 @@ function createCloudTexture(variant = 0) {
 
   const blobs = blobSets[variant % blobSets.length];
   const opacityScale = variant === 1 ? 0.82 : variant === 2 ? 0.88 : 0.95;
-  const shadeScale = variant === 1 ? 0.91 : variant === 2 ? 0.95 : 1.0;
 
   for (const blob of blobs) {
     const gradient = ctx.createRadialGradient(blob[0], blob[1], 2, blob[0], blob[1], blob[2]);
@@ -927,91 +872,12 @@ function createCloudTexture(variant = 0) {
     ctx.fill();
   }
 
-  ctx.globalCompositeOperation = "source-atop";
-  for (let i = 0; i < 8; i += 1) {
-    const sweep = (i / 7) * size;
-    const band = ctx.createLinearGradient(0, sweep, size, sweep + size * 0.2);
-    band.addColorStop(0, "rgba(255,255,255,0.05)");
-    band.addColorStop(0.5, "rgba(255,255,255,0.16)");
-    band.addColorStop(1, "rgba(255,255,255,0.04)");
-    ctx.fillStyle = band;
-    ctx.fillRect(0, 0, size, size);
-  }
-  ctx.globalCompositeOperation = "source-over";
-
-  const data = ctx.getImageData(0, 0, size, size);
-  const pixels = data.data;
-  const cloudSeed = (variant + 1) * 17041;
-  for (let y = 0; y < size; y += 1) {
-    const yNorm = y / (size - 1);
-    for (let x = 0; x < size; x += 1) {
-      const index = (y * size + x) * 4;
-      const alpha = pixels[index + 3];
-      if (alpha === 0) continue;
-
-      let h = (x * 374761393 + y * 668265263 + cloudSeed) >>> 0;
-      h = (h ^ (h >>> 13)) >>> 0;
-      h = Math.imul(h, 1274126177) >>> 0;
-      const noiseA = ((h ^ (h >>> 16)) >>> 0) / 4294967295;
-      const noiseB = Math.sin((x + cloudSeed * 0.0013) * 0.11 + y * 0.07) * 0.5 + 0.5;
-      const fluff = noiseA * 0.62 + noiseB * 0.38;
-
-      const verticalLight = 1.08 - yNorm * 0.2;
-      const brightness = THREE.MathUtils.clamp(
-        (0.78 + (fluff - 0.5) * 0.32) * verticalLight * shadeScale,
-        0.58,
-        1.0
-      );
-      const alphaScale = THREE.MathUtils.clamp(0.82 + fluff * 0.3, 0.64, 1.0);
-
-      const value = Math.round(255 * brightness);
-      pixels[index] = value;
-      pixels[index + 1] = value;
-      pixels[index + 2] = value;
-      pixels[index + 3] = Math.round(alpha * alphaScale);
-    }
-  }
-
-  const pixelStep = 3;
-  for (let by = 0; by < size; by += pixelStep) {
-    for (let bx = 0; bx < size; bx += pixelStep) {
-      const sampleX = Math.min(size - 1, bx + (pixelStep >> 1));
-      const sampleY = Math.min(size - 1, by + (pixelStep >> 1));
-      const sampleIndex = (sampleY * size + sampleX) * 4;
-      const sampleAlpha = pixels[sampleIndex + 3];
-      if (sampleAlpha === 0) continue;
-
-      const brightness = pixels[sampleIndex] / 255;
-      const alpha = sampleAlpha / 255;
-      const quantBrightness = Math.round(brightness * 4) / 4;
-      const quantAlpha = Math.round(alpha * 5) / 5;
-      const value = Math.round(quantBrightness * 255);
-      const outAlpha = quantAlpha <= 0.08 ? 0 : Math.round(quantAlpha * 255);
-
-      for (let oy = 0; oy < pixelStep; oy += 1) {
-        const py = by + oy;
-        if (py >= size) continue;
-        for (let ox = 0; ox < pixelStep; ox += 1) {
-          const px = bx + ox;
-          if (px >= size) continue;
-          const targetIndex = (py * size + px) * 4;
-          if (pixels[targetIndex + 3] === 0) continue;
-          pixels[targetIndex] = value;
-          pixels[targetIndex + 1] = value;
-          pixels[targetIndex + 2] = value;
-          pixels[targetIndex + 3] = outAlpha;
-        }
-      }
-    }
-  }
-  ctx.putImageData(data, 0, 0);
-
   const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipMapLinearFilter;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.generateMipmaps = false;
+  texture.generateMipmaps = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -1609,9 +1475,9 @@ function createCloudLayer() {
     const geometry = new THREE.PlaneGeometry(1, 1);
     const material = new THREE.MeshLambertMaterial({
       map: createCloudTexture(variant),
-      transparent: false,
-      alphaTest: 0.24,
-      depthWrite: true,
+      transparent: true,
+      alphaTest: 0.12,
+      depthWrite: false,
       side: THREE.DoubleSide,
       color: 0xffffff,
     });
@@ -5368,44 +5234,9 @@ function textureNoise2d(x, y, seed) {
 }
 
 function applyFloraTextureDetail(ctx, size, kind) {
-  const seed = textureSeedFromString(kind);
-  const imageData = ctx.getImageData(0, 0, size, size);
-  const pixels = imageData.data;
-  const pixelStep = 2;
-
-  for (let y = 0; y < size; y += 1) {
-    const yNorm = y / (size - 1);
-    for (let x = 0; x < size; x += 1) {
-      const index = (y * size + x) * 4;
-      const alpha = pixels[index + 3];
-      if (alpha === 0) continue;
-
-      const blockX = (x / pixelStep) | 0;
-      const blockY = (y / pixelStep) | 0;
-      const baseNoise = textureNoise2d(blockX, blockY, seed);
-      const broadNoise = textureNoise2d((blockX / 2) | 0, (blockY / 2) | 0, seed ^ 0x9e3779b9);
-      const xNorm = x / (size - 1);
-      const verticalLight = 0.8 + (1 - yNorm) * 0.23;
-      const centerLight = 0.88 + (0.5 - Math.abs(xNorm - 0.5)) * 0.2;
-      const grain = (baseNoise - 0.5) * 0.26 + (broadNoise - 0.5) * 0.14;
-      let brightness = verticalLight * centerLight + grain;
-
-      if (alpha < 180) brightness *= 0.87;
-      brightness = THREE.MathUtils.clamp(brightness, 0.42, 1.0);
-      brightness = Math.round(brightness * 5) / 5;
-
-      const value = Math.round(255 * brightness);
-      pixels[index] = value;
-      pixels[index + 1] = value;
-      pixels[index + 2] = value;
-
-      const alphaScale = THREE.MathUtils.clamp(0.88 + (baseNoise - 0.5) * 0.3, 0.68, 1.0);
-      const shapedAlpha = Math.round(alpha * alphaScale);
-      pixels[index + 3] = shapedAlpha >= 132 ? 255 : 0;
-    }
-  }
-
-  ctx.putImageData(imageData, 0, 0);
+  void ctx;
+  void size;
+  void kind;
 }
 
 function createFloraTexture(kind) {
@@ -5637,11 +5468,11 @@ function createFloraTexture(kind) {
   applyFloraTextureDetail(ctx, size, kind);
 
   const texture = new THREE.CanvasTexture(canvas);
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.minFilter = THREE.LinearMipMapLinearFilter;
   texture.wrapS = THREE.ClampToEdgeWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.generateMipmaps = false;
+  texture.generateMipmaps = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -5649,78 +5480,16 @@ function createFloraTexture(kind) {
 function createFloraMaterialFromTexture(texture) {
   const material = new THREE.MeshLambertMaterial({
     map: texture,
-    transparent: false,
-    alphaTest: 0.5,
-    depthWrite: true,
+    transparent: true,
+    alphaTest: 0.45,
     side: THREE.DoubleSide,
     vertexColors: true,
   });
-  configureFloraMaterial(material);
   return material;
 }
 
 function configureFloraMaterial(material) {
-  material.customProgramCacheKey = () => "flora-sway-v1";
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = { value: 0 };
-    shader.uniforms.uWindDir = { value: new THREE.Vector2(1, 0) };
-    shader.uniforms.uWindStrength = { value: 0.34 };
-    shader.uniforms.uDaylight = { value: 1 };
-    material.userData.shaderUniforms = shader.uniforms;
-
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "void main() {",
-        `
-      uniform float uTime;
-      uniform vec2 uWindDir;
-      uniform float uWindStrength;
-      varying float vFloraTop;
-      varying float vFloraSway;
-      void main() {
-      `
-      )
-      .replace(
-        "#include <begin_vertex>",
-        `
-      #include <begin_vertex>
-      vFloraTop = clamp(uv.y, 0.0, 1.0);
-      vec3 worldRoot = (modelMatrix * vec4(position, 1.0)).xyz;
-      float phase = dot(worldRoot.xz, vec2(0.28, 0.19));
-      float gust = sin(uTime * (1.6 + uWindStrength * 1.8) + phase * 2.2);
-      float flutter = sin(uTime * 6.2 + phase * 7.1) * 0.35;
-      float sway = (gust * 0.22 + flutter * 0.08) * (0.16 + uWindStrength * 0.4) * pow(vFloraTop, 1.15);
-      transformed.x += uWindDir.x * sway;
-      transformed.z += uWindDir.y * sway;
-      vFloraSway = sway;
-      `
-      );
-
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "void main() {",
-        `
-      uniform float uDaylight;
-      varying float vFloraTop;
-      varying float vFloraSway;
-      void main() {
-      `
-      )
-      .replace(
-        "#include <color_fragment>",
-        `
-      #include <color_fragment>
-      float topBand = floor(vFloraTop * 4.0) / 4.0;
-      float swayBand = floor(clamp(abs(vFloraSway) * 40.0, 0.0, 3.0)) / 3.0;
-      float dayTint = mix(0.88, 1.03, uDaylight);
-      float shade = dayTint + topBand * 0.08 + swayBand * 0.04;
-      shade = floor(shade * 6.0) / 6.0;
-      vec3 floraColor = diffuseColor.rgb * clamp(shade, 0.68, 1.16);
-      floraColor = floor(floraColor * 5.0) / 5.0;
-      diffuseColor.rgb = clamp(floraColor, 0.0, 1.0);
-      `
-      );
-  };
+  void material;
   material.needsUpdate = true;
 }
 
@@ -7941,13 +7710,6 @@ function updateLighting(delta) {
   for (const material of Object.values(floraMaterials)) {
     if (material && material.emissive instanceof THREE.Color) {
       material.emissive.setRGB(0, 0, 0);
-    }
-    const shaderUniforms = material?.userData?.shaderUniforms;
-    if (shaderUniforms) {
-      shaderUniforms.uTime.value += delta;
-      shaderUniforms.uWindDir.value.set(weather.windX, weather.windZ);
-      shaderUniforms.uWindStrength.value = weather.windStrength;
-      shaderUniforms.uDaylight.value = daylight;
     }
   }
   const rainWetness = THREE.MathUtils.clamp(weather.rain + weather.cloudiness * 0.18, 0, 1);
